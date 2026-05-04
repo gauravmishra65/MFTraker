@@ -3,7 +3,7 @@ import { z } from "zod";
 import { Link, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import toast from "react-hot-toast";
-import { LineChart } from "lucide-react";
+import { ChartLine as LineChart } from "lucide-react";
 
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
@@ -32,7 +32,7 @@ export default function Login() {
       toast.success(`Welcome back, ${data.user.fullName.split(" ")[0]}`);
       nav("/");
     } catch (err: any) {
-      toast.error(err?.response?.data?.message ?? "Login failed");
+      toast.error(err?.message ?? "Login failed");
     } finally {
       setLoading(false);
     }

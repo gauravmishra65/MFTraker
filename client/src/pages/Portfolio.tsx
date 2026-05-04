@@ -9,7 +9,6 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { changeColor, classNames, formatINR, formatPct } from "@/lib/format";
 import { Download, Plus } from "lucide-react";
-import { useAuthStore } from "@/store/auth";
 
 const SECTOR_COLORS = ["#2f8df8", "#16a34a", "#f59e0b", "#dc2626", "#9333ea", "#0ea5e9", "#65a30d", "#475569", "#ec4899"];
 
@@ -41,8 +40,7 @@ export default function Portfolio() {
         </div>
         <div className="flex gap-2">
           <Button onClick={() => setShowAdd(true)} variant="primary"><Plus className="w-4 h-4" /> Add transaction</Button>
-          <DownloadButton path="/portfolio/export.csv" label="CSV" />
-          <DownloadButton path="/portfolio/report.pdf" label="PDF" />
+          <DownloadButton label="CSV" data={portfolio.data?.holdings ?? []} />
         </div>
       </div>
 
@@ -124,21 +122,22 @@ export default function Portfolio() {
   );
 }
 
-/** Authenticated download — fetch with bearer token, then trigger save dialog. */
-function DownloadButton({ path, label }: { path: string; label: string }) {
-  const token = useAuthStore((s) => s.token);
+/** Client-side CSV download from portfolio data. */
+function DownloadButton({ label, data }: { label: string; data: any[] }) {
   const [loading, setLoading] = useState(false);
   async function go() {
     setLoading(true);
     try {
-      const base = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
-      const res = await fetch(`${base}/api${path}`, { headers: { Authorization: `Bearer ${token}` } });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const blob = await res.blob();
+      const header = "Symbol,Name,Type,Quantity,AvgPrice,Invested,LTP,CurrentValue,P&L,P&L %\n";
+      const rows = data.map((h) =>
+        [h.symbol, `"${(h.name ?? "").replace(/"/g, '""')}"`, h.instrumentType ?? "STOCK", h.quantity, h.avgPrice?.toFixed(2), h.invested?.toFixed(2), h.ltp?.toFixed(2), h.currentValue?.toFixed(2), h.pnl?.toFixed(2), h.pnlPct?.toFixed(2)].join(",")
+      );
+      const csv = header + rows.join("\n");
+      const blob = new Blob([csv], { type: "text/csv" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = path.split("/").pop() ?? "download";
+      a.download = "portfolio.csv";
       a.click();
       URL.revokeObjectURL(url);
     } catch (e: any) {
@@ -189,7 +188,7 @@ function AddTransactionModal({ onClose, onSuccess }: { onClose: () => void; onSu
       });
     },
     onSuccess: () => { toast.success("Transaction added"); onSuccess(); onClose(); },
-    onError: (e: any) => toast.error(e?.response?.data?.message ?? e.message ?? "Failed")
+    onError: (e: any) => toast.error(e?.message ?? "Failed")
   });
 
   async function search(q: string) {

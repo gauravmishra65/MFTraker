@@ -123,7 +123,7 @@ export default function Register() {
       toast.success("Welcome aboard!");
       nav("/");
     } catch (err: any) {
-      toast.error(err?.response?.data?.message ?? "Could not register");
+      toast.error(err?.message ?? "Could not register");
     } finally {
       setLoading(false);
     }

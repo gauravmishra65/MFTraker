@@ -7,10 +7,14 @@ import { Toaster } from "react-hot-toast";
 import App from "./App";
 import "./index.css";
 import { useThemeStore } from "./store/theme";
+import { useAuthStore } from "./store/auth";
 
 // Apply persisted theme before first paint.
 const initialTheme = useThemeStore.getState().theme;
 document.documentElement.classList.toggle("dark", initialTheme === "dark");
+
+// Initialize auth session from Supabase
+useAuthStore.getState().initSession();
 
 const queryClient = new QueryClient({
   defaultOptions: {

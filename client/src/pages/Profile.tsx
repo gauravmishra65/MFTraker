@@ -39,12 +39,13 @@ export default function Profile() {
   const [form, setForm] = useState<Me>({} as Me);
 
   async function load() {
-    const { data } = await api.get<Me>("/user/me");
-    setMe(data);
+    const { data } = await api.get("/user/me");
+    const meData = data as Me;
+    setMe(meData);
     setForm({
-      ...data,
-      dob: data.dob ? new Date(data.dob).toISOString().slice(0, 10) : "",
-      investmentGoals: data.investmentGoals ?? []
+      ...meData,
+      dob: meData.dob ? new Date(meData.dob).toISOString().slice(0, 10) : "",
+      investmentGoals: meData.investmentGoals ?? []
     });
   }
 
@@ -65,12 +66,12 @@ export default function Profile() {
         annualIncomeRange: form.annualIncomeRange || null,
         investmentGoals: form.investmentGoals ?? []
       };
-      const { data } = await api.put<Me>("/user/me", payload);
-      setMe(data);
+      const { data } = await api.put("/user/me", payload);
+      setMe(data as Me);
       setEditing(false);
       toast.success("Profile saved");
     } catch (e: any) {
-      toast.error(e?.response?.data?.message ?? "Failed to save");
+      toast.error(e?.message ?? "Failed to save");
     } finally { setSaving(false); }
   }
 

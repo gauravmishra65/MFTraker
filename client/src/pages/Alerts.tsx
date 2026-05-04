@@ -102,7 +102,7 @@ function NewAlertModal({ onClose, onCreated }: { onClose: () => void; onCreated:
       toast.success("Alert created");
       onCreated();
     } catch (e: any) {
-      toast.error(e?.response?.data?.message ?? "Failed");
+      toast.error(e?.message ?? "Failed");
     } finally { setLoading(false); }
   }
   return (

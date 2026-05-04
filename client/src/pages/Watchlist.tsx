@@ -2,17 +2,15 @@ import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 
-import { api, wsBaseUrl } from "@/lib/api";
+import { api } from "@/lib/api";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { changeColor, classNames, formatINR, formatPct } from "@/lib/format";
-import { useAuthStore } from "@/store/auth";
 import { Trash2, Plus } from "lucide-react";
 
 export default function Watchlist() {
   const qc = useQueryClient();
-  const token = useAuthStore((s) => s.token);
   const [activeId, setActiveId] = useState<string | null>(null);
 
   const watchlists = useQuery({
@@ -31,25 +29,8 @@ export default function Watchlist() {
     refetchInterval: 15_000
   });
 
-  // Live ticks via websocket — overlay on top of the http poll.
+  // Live ticks via polling (WebSocket disabled for Supabase setup)
   const [ticks, setTicks] = useState<Record<string, { price: number; changePct: number }>>({});
-  useEffect(() => {
-    if (!token || !activeId) return;
-    const symbols = (live.data?.items ?? [])
-      .map((it: any) => it.stock?.yahooSymbol)
-      .filter(Boolean) as string[];
-    if (!symbols.length) return;
-    let ws: WebSocket;
-    try {
-      ws = new WebSocket(`${wsBaseUrl}?token=${encodeURIComponent(token)}`);
-      ws.onopen = () => ws.send(JSON.stringify({ type: "subscribe", symbols }));
-      ws.onmessage = (ev) => {
-        const m = JSON.parse(ev.data);
-        if (m.type === "tick") setTicks((t) => ({ ...t, [m.symbol]: { price: m.price, changePct: m.changePct } }));
-      };
-    } catch { /* ignore */ }
-    return () => ws?.close();
-  }, [token, activeId, live.data]);
 
   const create = useMutation({
     mutationFn: async (name: string) => (await api.post("/watchlists", { name })).data,

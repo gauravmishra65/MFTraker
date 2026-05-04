@@ -20,8 +20,8 @@ export default function Dashboard() {
   const portfolio = useQuery({
     queryKey: ["portfolio"],
     queryFn: async () => {
-      const { data } = await api.get<{ summary: PortfolioSummary; holdings: Holding[] }>("/portfolio");
-      return data;
+      const { data } = await api.get("/portfolio");
+      return data as { summary: PortfolioSummary; holdings: Holding[] };
     }
   });
 

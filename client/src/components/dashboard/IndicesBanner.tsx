@@ -14,8 +14,8 @@ export default function IndicesBanner() {
   const { data } = useQuery({
     queryKey: ["indices"],
     queryFn: async () => {
-      const { data } = await api.get<{ indices: Index[] }>("/market/indices");
-      return data.indices;
+      const { data } = await api.get("/market/indices");
+      return (data as { indices: Index[] }).indices;
     },
     refetchInterval: 5_000
   });

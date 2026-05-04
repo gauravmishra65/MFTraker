@@ -50,7 +50,7 @@ export default function StockDetail() {
       await api.post("/watchlists/items", { watchListId: wl.id, stockId: quote.data.stock.id });
     },
     onSuccess: () => { toast.success("Added to watchlist"); qc.invalidateQueries({ queryKey: ["watchlists"] }); },
-    onError: (e: any) => toast.error(e?.response?.data?.message ?? e.message ?? "Failed")
+    onError: (e: any) => toast.error(e?.message ?? "Failed")
   });
 
   const q = quote.data?.quote;

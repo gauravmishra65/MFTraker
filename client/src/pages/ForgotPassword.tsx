@@ -3,35 +3,21 @@ import toast from "react-hot-toast";
 import { Link } from "react-router-dom";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
-import { api } from "@/lib/api";
+import { authApi } from "@/lib/api";
 
 export default function ForgotPassword() {
-  const [step, setStep] = useState<"email" | "reset">("email");
+  const [step, setStep] = useState<"email" | "done">("email");
   const [email, setEmail] = useState("");
-  const [otp, setOtp] = useState("");
-  const [newPassword, setNewPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function sendOtp() {
+  async function sendReset() {
     setLoading(true);
     try {
-      await api.post("/auth/forgot-password", { email });
-      toast.success("If the email exists, an OTP has been sent.");
-      setStep("reset");
+      await authApi.resetPassword(email);
+      toast.success("If the email exists, a reset link has been sent.");
+      setStep("done");
     } catch (err: any) {
-      toast.error(err?.response?.data?.message ?? "Could not send OTP");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function reset() {
-    setLoading(true);
-    try {
-      await api.post("/auth/reset-password", { email, otp, newPassword });
-      toast.success("Password updated. You can now sign in.");
-    } catch (err: any) {
-      toast.error(err?.response?.data?.message ?? "Reset failed");
+      toast.error(err?.message ?? "Could not send reset email");
     } finally {
       setLoading(false);
     }
@@ -44,13 +30,13 @@ export default function ForgotPassword() {
         {step === "email" ? (
           <div className="mt-5 space-y-4">
             <Input label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-            <Button className="w-full" loading={loading} onClick={sendOtp} size="lg">Send OTP</Button>
+            <Button className="w-full" loading={loading} onClick={sendReset} size="lg">Send reset link</Button>
           </div>
         ) : (
           <div className="mt-5 space-y-4">
-            <Input label="OTP" value={otp} onChange={(e) => setOtp(e.target.value)} maxLength={6} hint="6-digit code from your email" />
-            <Input label="New password" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
-            <Button className="w-full" loading={loading} onClick={reset} size="lg">Reset password</Button>
+            <p className="text-sm text-slate-600 dark:text-slate-300">
+              Check your email for a password reset link. You can then sign in with your new password.
+            </p>
           </div>
         )}
         <p className="text-sm text-slate-500 mt-4 text-center">
