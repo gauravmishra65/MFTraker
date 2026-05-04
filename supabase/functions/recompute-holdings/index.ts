@@ -1,11 +1,22 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
-};
+const ALLOWED_ORIGINS = new Set([
+  "http://localhost:5173",
+  "http://localhost:4173",
+  Deno.env.get("CLIENT_URL"),
+].filter(Boolean));
+
+function getCorsHeaders(req: Request): Record<string, string> {
+  const origin = req.headers.get("Origin") ?? "";
+  const allowOrigin = ALLOWED_ORIGINS.has(origin) ? origin : "";
+  return {
+    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+    "Access-Control-Max-Age": "86400",
+  };
+}
 
 const BUY_TYPES = new Set(["BUY", "SIP", "LUMPSUM"]);
 const SELL_TYPES = new Set(["SELL", "REDEEM"]);
@@ -34,16 +45,20 @@ setInterval(() => {
   }
 }, 120_000);
 
+function jsonRes(req: Request, body: unknown, status = 200, extra: Record<string, string> = {}): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...getCorsHeaders(req), "Content-Type": "application/json", ...extra },
+  });
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
-    return new Response(null, { status: 200, headers: corsHeaders });
+    return new Response(null, { status: 200, headers: getCorsHeaders(req) });
   }
 
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
-      status: 405,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return jsonRes(req, { error: "Method not allowed" }, 405);
   }
 
   try {
@@ -51,48 +66,31 @@ Deno.serve(async (req: Request) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
     if (!supabaseUrl || !supabaseKey) {
-      return new Response(JSON.stringify({ error: "Server configuration error" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonRes(req, { error: "Server configuration error" }, 500);
     }
 
     // Verify JWT from Authorization header
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ error: "Missing or invalid authorization header" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonRes(req, { error: "Missing or invalid authorization header" }, 401);
     }
 
     const token = authHeader.slice(7).trim();
     if (!token || token.length < 10) {
-      return new Response(JSON.stringify({ error: "Invalid token" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonRes(req, { error: "Invalid token" }, 401);
     }
 
-    // Create a client with the user's token to verify auth
     const supabaseClient = createClient(supabaseUrl, supabaseKey);
     const { data: { user }, error: authError } = await supabaseClient.auth.getUser(token);
 
     if (authError || !user) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonRes(req, { error: "Unauthorized" }, 401);
     }
 
     const userId = user.id;
 
-    // Rate limit per user
     if (!checkRateLimit(userId)) {
-      return new Response(JSON.stringify({ error: "Rate limit exceeded. Try again in a minute." }), {
-        status: 429,
-        headers: { ...corsHeaders, "Content-Type": "application/json", "Retry-After": "60" },
-      });
+      return jsonRes(req, { error: "Rate limit exceeded. Try again in a minute." }, 429, { "Retry-After": "60" });
     }
 
     // Fetch all transactions for the user
@@ -103,10 +101,7 @@ Deno.serve(async (req: Request) => {
       .order("date", { ascending: true });
 
     if (txError) {
-      return new Response(JSON.stringify({ error: "Failed to fetch transactions" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonRes(req, { error: "Failed to fetch transactions" }, 500);
     }
 
     // Validate and accumulate holdings
@@ -120,10 +115,8 @@ Deno.serve(async (req: Request) => {
     }>();
 
     for (const t of txs ?? []) {
-      // Validate transaction type
       if (!VALID_TYPES.has(t.type)) continue;
 
-      // Validate numeric fields
       const qty = Number(t.quantity);
       const price = Number(t.price);
       const brokerage = Number(t.brokerage ?? 0);
@@ -165,51 +158,69 @@ Deno.serve(async (req: Request) => {
 
     const rows = [...acc.values()].filter((h) => h.quantity > 1e-9);
 
-    // Delete existing holdings and insert new ones (within a logical operation)
-    const { error: deleteError } = await supabaseClient
-      .from("portfolio_holdings")
-      .delete()
-      .eq("user_id", userId);
+    // Use atomic upsert approach: insert new rows first, then delete stale ones
+    // This avoids the race condition where delete succeeds but insert fails
+    const inserts = rows.map((h) => ({
+      user_id: userId,
+      instrument_type: h.instrumentType,
+      instrument_id: h.instrumentId,
+      symbol: h.symbol,
+      name: h.name,
+      quantity: Math.round(h.quantity * 1e8) / 1e8,
+      avg_price: h.quantity > 0 ? Math.round((h.invested / h.quantity) * 100) / 100 : 0,
+      invested: Math.round(h.invested * 100) / 100,
+    }));
 
-    if (deleteError) {
-      return new Response(JSON.stringify({ error: "Failed to update holdings" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    if (rows.length > 0) {
-      const inserts = rows.map((h) => ({
-        user_id: userId,
-        instrument_type: h.instrumentType,
-        instrument_id: h.instrumentId,
-        symbol: h.symbol,
-        name: h.name,
-        quantity: Math.round(h.quantity * 1e8) / 1e8, // Avoid floating point drift
-        avg_price: h.quantity > 0 ? Math.round((h.invested / h.quantity) * 100) / 100 : 0,
-        invested: Math.round(h.invested * 100) / 100,
-      }));
-
-      const { error: insertError } = await supabaseClient
+    // Step 1: Upsert all computed holdings (insert new, update existing)
+    if (inserts.length > 0) {
+      const { error: upsertError } = await supabaseClient
         .from("portfolio_holdings")
-        .insert(inserts);
-
-      if (insertError) {
-        return new Response(JSON.stringify({ error: "Failed to save holdings" }), {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        .upsert(inserts, {
+          onConflict: "user_id,instrument_type,instrument_id",
         });
+
+      if (upsertError) {
+        return jsonRes(req, { error: "Failed to save holdings" }, 500);
       }
     }
 
-    return new Response(JSON.stringify({ ok: true, holdings: rows.length }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Internal error";
-    return new Response(JSON.stringify({ error: "An unexpected error occurred" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    // Step 2: Delete stale holdings that are no longer in the computed set
+    const currentInstrumentIds = new Set(rows.map((r) => `${r.instrumentType}:${r.instrumentId}`));
+
+    const { data: existingHoldings } = await supabaseClient
+      .from("portfolio_holdings")
+      .select("id, instrument_type, instrument_id")
+      .eq("user_id", userId);
+
+    const staleIds = (existingHoldings ?? [])
+      .filter((h) => !currentInstrumentIds.has(`${h.instrument_type}:${h.instrument_id}`))
+      .map((h) => h.id);
+
+    if (staleIds.length > 0) {
+      const { error: deleteError } = await supabaseClient
+        .from("portfolio_holdings")
+        .delete()
+        .in("id", staleIds);
+
+      if (deleteError) {
+        return jsonRes(req, { error: "Failed to clean up stale holdings" }, 500);
+      }
+    }
+
+    // Step 3: If no holdings at all, delete everything for this user
+    if (rows.length === 0) {
+      const { error: deleteError } = await supabaseClient
+        .from("portfolio_holdings")
+        .delete()
+        .eq("user_id", userId);
+
+      if (deleteError) {
+        return jsonRes(req, { error: "Failed to clear holdings" }, 500);
+      }
+    }
+
+    return jsonRes(req, { ok: true, holdings: rows.length });
+  } catch {
+    return jsonRes(req, { error: "An unexpected error occurred" }, 500);
   }
 });

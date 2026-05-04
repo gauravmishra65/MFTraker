@@ -65,7 +65,7 @@ export default function Register() {
   const [loading, setLoading] = useState(false);
 
   // Hydrate from localStorage so the user can leave and come back without losing input.
-  // We deliberately exclude password fields from the draft.
+  // We deliberately exclude password and sensitive fields (PAN, DOB, email, phone) from the draft.
   const draft = (() => {
     try { return JSON.parse(localStorage.getItem(DRAFT_KEY) || "{}"); } catch { return {}; }
   })();
@@ -73,12 +73,12 @@ export default function Register() {
   const { register, handleSubmit, control, watch, formState: { errors }, getValues } = useForm<Form>({
     defaultValues: {
       fullName: draft.fullName ?? "",
-      email: draft.email ?? "",
-      phone: draft.phone ?? "",
+      email: "",
+      phone: "",
       password: "",
       confirmPassword: "",
-      dob: draft.dob ?? "",
-      pan: draft.pan ?? "",
+      dob: "",
+      pan: "",
       city: draft.city ?? "",
       state: draft.state ?? "",
       investmentExperience: draft.investmentExperience ?? "",
@@ -88,11 +88,10 @@ export default function Register() {
     }
   });
 
-  // Auto-save draft (sans passwords) on every change.
+  // Auto-save draft (excluding passwords and sensitive PII) on every change.
   useEffect(() => {
     const sub = watch((v) => {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { password, confirmPassword, ...safe } = v as Form;
+      const { password, confirmPassword, pan, dob, email, phone, ...safe } = v as Form;
       try { localStorage.setItem(DRAFT_KEY, JSON.stringify(safe)); } catch { /* ignore */ }
     });
     return () => sub.unsubscribe();

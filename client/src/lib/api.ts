@@ -82,7 +82,12 @@ export const authApi = {
 
 // Sanitize search input to prevent PostgREST filter injection
 function sanitizeSearch(q: string): string {
-  return q.replace(/[%(),.\\]/g, "").slice(0, 100);
+  const trimmed = q.trim().slice(0, 100);
+  // Only allow alphanumeric, spaces, hyphens, dots, and carets (common in tickers)
+  if (!/^[a-zA-Z0-9.\-^&\s]*$/.test(trimmed)) {
+    return trimmed.replace(/[^a-zA-Z0-9.\-^&\s]/g, "");
+  }
+  return trimmed;
 }
 
 export const stocksApi = {
