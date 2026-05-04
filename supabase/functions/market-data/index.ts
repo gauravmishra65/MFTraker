@@ -190,34 +190,34 @@ Deno.serve(async (req: Request) => {
     }
 
     if (movers === "true") {
-      const moverResults: { symbol: string; name: string; price: number; changePct: number }[] = [];
-      const batchSize = 5;
-      for (let i = 0; i < NIFTY50_SYMBOLS.length; i += batchSize) {
-        const batch = NIFTY50_SYMBOLS.slice(i, i + batchSize);
-        await Promise.all(batch.map(async (sym) => {
-          try {
-            const yUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=1d&interval=1m&includePrepost=false`;
-            const res = await fetch(yUrl, {
-              headers: { "User-Agent": "Mozilla/5.0" },
-              signal: AbortSignal.timeout(6_000),
-            });
-            if (!res.ok) return;
-            const data = await res.json();
-            const meta = data?.chart?.result?.[0]?.meta;
-            if (!meta || typeof meta.regularMarketPrice !== "number" || typeof meta.previousClose !== "number" || meta.previousClose === 0) return;
-            const changePct = ((meta.regularMarketPrice - meta.previousClose) / meta.previousClose) * 100;
-            moverResults.push({
-              symbol: sym.replace(".NS", ""),
-              name: String(meta.shortName ?? sym).slice(0, 100),
-              price: meta.regularMarketPrice,
-              changePct,
-            });
-          } catch { /* skip */ }
-        }));
-      }
+      const settled = await Promise.allSettled(
+        NIFTY50_SYMBOLS.map(async (sym) => {
+          const yUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=1d&interval=1m&includePrepost=false`;
+          const res = await fetch(yUrl, {
+            headers: { "User-Agent": "Mozilla/5.0" },
+            signal: AbortSignal.timeout(5_000),
+          });
+          if (!res.ok) throw new Error("bad status");
+          const data = await res.json();
+          const meta = data?.chart?.result?.[0]?.meta;
+          if (!meta || typeof meta.regularMarketPrice !== "number" || typeof meta.previousClose !== "number" || meta.previousClose === 0) throw new Error("no meta");
+          const changePct = ((meta.regularMarketPrice - meta.previousClose) / meta.previousClose) * 100;
+          return {
+            symbol: sym.replace(".NS", ""),
+            name: String(meta.shortName ?? sym).slice(0, 100),
+            price: meta.regularMarketPrice,
+            changePct,
+          };
+        })
+      );
+
+      const moverResults = settled
+        .filter((r): r is PromiseFulfilledResult<{ symbol: string; name: string; price: number; changePct: number }> => r.status === "fulfilled")
+        .map((r) => r.value);
+
       moverResults.sort((a, b) => b.changePct - a.changePct);
       const gainers = moverResults.filter((m) => m.changePct > 0).slice(0, 6);
-      const losers = moverResults.filter((m) => m.changePct < 0).slice(-6).reverse();
+      const losers = [...moverResults].filter((m) => m.changePct < 0).reverse().slice(0, 6);
       return jsonRes(req, { gainers, losers });
     }
 
