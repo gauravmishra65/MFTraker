@@ -12,6 +12,44 @@ import StockChart from "@/components/stocks/StockChart";
 
 const SHAREHOLDING_COLORS = ["#2f8df8", "#16a34a", "#f59e0b", "#9333ea"];
 
+interface StockData {
+  id: string;
+  symbol: string;
+  yahoo_symbol: string;
+  name: string;
+  exchange: string;
+  sector: string | null;
+  cap_category: string | null;
+  isin: string | null;
+}
+
+interface QuoteData {
+  price: number;
+  change: number;
+  changePct: number;
+  open?: number;
+  high?: number;
+  low?: number;
+  previousClose?: number;
+  fiftyTwoWeekHigh?: number;
+  fiftyTwoWeekLow?: number;
+  volume?: number;
+  marketCap?: number;
+}
+
+interface PeerData {
+  id: string;
+  symbol: string;
+  yahooSymbol: string;
+  name: string;
+  sector: string | null;
+}
+
+interface ShareholdingPattern {
+  group: string;
+  weight: number;
+}
+
 export default function StockDetail() {
   const { symbol = "" } = useParams();
   const qc = useQueryClient();
@@ -20,43 +58,59 @@ export default function StockDetail() {
     queryKey: ["quote", symbol],
     queryFn: async () => {
       const { data } = await api.get(`/stocks/quote/${encodeURIComponent(symbol)}`);
-      return data as { stock: any; quote: any };
+      return data as { stock: StockData | null; quote: QuoteData | null };
     },
     refetchInterval: 5_000
   });
 
   const peers = useQuery({
     queryKey: ["peers", symbol],
-    queryFn: async () => (await api.get(`/stocks/${encodeURIComponent(symbol)}/similar`)).data.peers as any[],
+    queryFn: async () => {
+      const res = await api.get(`/stocks/${encodeURIComponent(symbol)}/similar`);
+      return (res.data as { peers: PeerData[] }).peers;
+    },
     enabled: !!quote.data?.stock
   });
 
   const shareholding = useQuery({
     queryKey: ["shareholding", symbol],
-    queryFn: async () => (await api.get(`/stocks/${encodeURIComponent(symbol)}/shareholding`)).data,
+    queryFn: async () => {
+      const res = await api.get(`/stocks/${encodeURIComponent(symbol)}/shareholding`);
+      return res.data as { pattern: ShareholdingPattern[]; asOf: string; symbol: string };
+    },
     enabled: !!quote.data?.stock
   });
 
   const watchlists = useQuery({
     queryKey: ["watchlists"],
-    queryFn: async () => (await api.get("/watchlists")).data.watchlists as any[]
+    queryFn: async () => {
+      const res = await api.get("/watchlists");
+      return (res.data as { watchlists: { id: string; name: string }[] }).watchlists;
+    }
   });
 
   const addToWatch = useMutation({
     mutationFn: async () => {
       const wl = watchlists.data?.[0];
       if (!wl) throw new Error("No watchlist found. Create one first.");
-      if (!quote.data?.stock?.id) throw new Error("Stock not in DB — open it from screener instead.");
+      if (!quote.data?.stock?.id) throw new Error("Stock not found in database. Try searching from the screener.");
       await api.post("/watchlists/items", { watchListId: wl.id, stockId: quote.data.stock.id });
     },
     onSuccess: () => { toast.success("Added to watchlist"); qc.invalidateQueries({ queryKey: ["watchlists"] }); },
-    onError: (e: any) => toast.error(e?.message ?? "Failed")
+    onError: (e: any) => toast.error(e?.message ?? "Failed to add to watchlist")
   });
 
   const q = quote.data?.quote;
   const s = quote.data?.stock;
+
   return (
     <div className="space-y-6">
+      {quote.isError && (
+        <div className="text-sm text-red-600 bg-red-50 dark:bg-red-900/20 dark:text-red-400 rounded-md px-4 py-3">
+          Failed to load stock data. Please try again.
+        </div>
+      )}
+
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{s?.name ?? symbol}</h1>
@@ -102,22 +156,27 @@ export default function StockDetail() {
             <CardTitle>Shareholding pattern</CardTitle>
           </CardHeader>
           <CardBody>
-            {shareholding.data?.pattern ? (
-              <div className="h-56">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={shareholding.data.pattern} dataKey="weight" nameKey="group" innerRadius={40} outerRadius={75} paddingAngle={2}>
-                      {shareholding.data.pattern.map((_: any, i: number) => (
-                        <Cell key={i} fill={SHAREHOLDING_COLORS[i % SHAREHOLDING_COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(v: number) => `${v}%`} />
-                    <Legend wrapperStyle={{ fontSize: 11 }} />
-                  </PieChart>
-                </ResponsiveContainer>
+            {shareholding.isLoading ? (
+              <div className="h-56 flex items-center justify-center text-sm text-slate-400 animate-pulse">Loading...</div>
+            ) : shareholding.data?.pattern ? (
+              <div>
+                <div className="h-56">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={shareholding.data.pattern} dataKey="weight" nameKey="group" innerRadius={40} outerRadius={75} paddingAngle={2}>
+                        {shareholding.data.pattern.map((_, i) => (
+                          <Cell key={i} fill={SHAREHOLDING_COLORS[i % SHAREHOLDING_COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(v: number) => `${v}%`} />
+                      <Legend wrapperStyle={{ fontSize: 11 }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1 text-center">Estimated pattern (as of {shareholding.data.asOf})</p>
               </div>
             ) : (
-              <div className="text-sm text-slate-500">Loading…</div>
+              <div className="text-sm text-slate-500">No shareholding data available.</div>
             )}
           </CardBody>
         </Card>
@@ -126,7 +185,9 @@ export default function StockDetail() {
       <Card>
         <CardHeader><CardTitle>Similar stocks</CardTitle></CardHeader>
         <CardBody>
-          {peers.data?.length ? (
+          {peers.isLoading ? (
+            <div className="text-sm text-slate-400 animate-pulse">Loading peers...</div>
+          ) : peers.data?.length ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {peers.data.map((p) => (
                 <a
@@ -136,14 +197,14 @@ export default function StockDetail() {
                 >
                   <div className="min-w-0">
                     <div className="text-sm font-medium truncate">{p.name}</div>
-                    <div className="text-xs text-slate-500">{p.symbol} · {p.sector}</div>
+                    <div className="text-xs text-slate-500">{p.symbol} · {p.sector ?? "—"}</div>
                   </div>
-                  <span className="text-xs text-brand-600">→</span>
+                  <span className="text-xs text-brand-600">&rarr;</span>
                 </a>
               ))}
             </div>
           ) : (
-            <div className="text-sm text-slate-500">No peers in DB.</div>
+            <div className="text-sm text-slate-500">No similar stocks found in the database.</div>
           )}
         </CardBody>
       </Card>

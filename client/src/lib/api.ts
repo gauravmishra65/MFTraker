@@ -80,12 +80,18 @@ export const authApi = {
 
 // ---------- STOCKS ----------
 
+// Sanitize search input to prevent PostgREST filter injection
+function sanitizeSearch(q: string): string {
+  return q.replace(/[%(),.\\]/g, "").slice(0, 100);
+}
+
 export const stocksApi = {
   async search(q: string) {
+    const safe = sanitizeSearch(q);
     const { data, error } = await supabase
       .from("stocks")
       .select("id, symbol, yahoo_symbol, name, sector, cap_category, exchange, isin")
-      .or(`symbol.ilike.%${q}%,name.ilike.%${q}%,isin.eq.${q.toUpperCase()}`)
+      .or(`symbol.ilike.%${safe}%,name.ilike.%${safe}%,isin.eq.${safe.toUpperCase()}`)
       .limit(15);
     if (error) throw error;
     return (data ?? []).map((s) => ({
@@ -172,10 +178,11 @@ export const stocksApi = {
   },
 
   async getSimilar(symbol: string) {
+    const safe = sanitizeSearch(symbol);
     const { data: me } = await supabase
       .from("stocks")
       .select("id, sector")
-      .or(`symbol.eq.${symbol},yahoo_symbol.eq.${symbol}`)
+      .or(`symbol.eq.${safe},yahoo_symbol.eq.${safe}`)
       .maybeSingle();
     if (!me) return [];
     const { data, error } = await supabase
@@ -193,10 +200,11 @@ export const stocksApi = {
 
 export const mfApi = {
   async search(q: string) {
+    const safe = sanitizeSearch(q);
     const { data, error } = await supabase
       .from("mutual_funds")
       .select("*")
-      .or(`name.ilike.%${q}%,amc.ilike.%${q}%`)
+      .or(`name.ilike.%${safe}%,amc.ilike.%${safe}%`)
       .limit(30)
       .order("name");
     if (error) throw error;

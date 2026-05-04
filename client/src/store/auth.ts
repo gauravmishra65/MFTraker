@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { supabase } from "@/lib/supabase";
-import type { User } from "@supabase/supabase-js";
 
 export interface AuthUser {
   id: string;
@@ -13,9 +12,21 @@ export interface AuthUser {
 interface AuthState {
   token: string | null;
   user: AuthUser | null;
-  setAuth: (token: string, user: AuthUser) => void;
-  logout: () => void;
+  loading: boolean;
+  setAuth: (token: string | null, user: AuthUser | null) => void;
+  logout: () => Promise<void>;
   initSession: () => Promise<void>;
+}
+
+function userFromSession(session: any): AuthUser | null {
+  if (!session?.user) return null;
+  const meta = session.user.user_metadata ?? {};
+  return {
+    id: session.user.id,
+    fullName: meta.full_name ?? session.user.email?.split("@")[0] ?? "Investor",
+    email: session.user.email ?? "",
+    phone: meta.phone
+  };
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -23,24 +34,31 @@ export const useAuthStore = create<AuthState>()(
     (set) => ({
       token: null,
       user: null,
-      setAuth: (token, user) => set({ token, user }),
+      loading: true,
+      setAuth: (token, user) => set({ token, user, loading: false }),
       logout: async () => {
-        await supabase.auth.signOut();
-        set({ token: null, user: null });
+        try {
+          await supabase.auth.signOut();
+        } catch {
+          // Sign out on client even if server call fails
+        }
+        set({ token: null, user: null, loading: false });
       },
       initSession: async () => {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
-          const meta = session.user.user_metadata ?? {};
-          set({
-            token: session.access_token,
-            user: {
-              id: session.user.id,
-              fullName: meta.full_name ?? session.user.email?.split("@")[0] ?? "Investor",
-              email: session.user.email ?? "",
-              phone: meta.phone
-            }
-          });
+        set({ loading: true });
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session) {
+            set({
+              token: session.access_token,
+              user: userFromSession(session),
+              loading: false
+            });
+          } else {
+            set({ token: null, user: null, loading: false });
+          }
+        } catch {
+          set({ token: null, user: null, loading: false });
         }
       }
     }),
@@ -48,17 +66,11 @@ export const useAuthStore = create<AuthState>()(
   )
 );
 
-// Listen for auth state changes
+// Listen for auth state changes (token refresh, sign in/out from other tabs)
 supabase.auth.onAuthStateChange((_event, session) => {
-  if (session?.user) {
-    const meta = session.user.user_metadata ?? {};
-    useAuthStore.getState().setAuth(session.access_token, {
-      id: session.user.id,
-      fullName: meta.full_name ?? session.user.email?.split("@")[0] ?? "Investor",
-      email: session.user.email ?? "",
-      phone: meta.phone
-    });
+  if (session) {
+    useAuthStore.getState().setAuth(session.access_token, userFromSession(session));
   } else {
-    useAuthStore.getState().setAuth(null as any, null as any);
+    useAuthStore.getState().setAuth(null, null);
   }
 });

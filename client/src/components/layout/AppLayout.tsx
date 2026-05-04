@@ -1,11 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuthStore } from "@/store/auth";
 import { useThemeStore } from "@/store/theme";
-import {
-  LineChart, LayoutDashboard, Briefcase, Star, Filter, User2, Sun, Moon,
-  LogOut, Bell, BookOpen, Menu, X
-} from "lucide-react";
+import { ChartLine as LineChart, LayoutDashboard, Briefcase, Star, ListFilter as Filter, User as User2, Sun, Moon, LogOut, Bell, BookOpen, Menu, X } from "lucide-react";
 import GlobalSearch from "@/components/stocks/GlobalSearch";
 import IndicesBanner from "@/components/dashboard/IndicesBanner";
 import { classNames } from "@/lib/format";
@@ -28,13 +25,10 @@ export default function AppLayout() {
   const loc = useLocation();
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  // Auto-close drawer on route change.
-  // (Effect kept inline for simplicity — small page count.)
-  if (drawerOpen && typeof window !== "undefined") {
-    window.requestAnimationFrame(() => {
-      // we want this to not trigger a render loop; only close if it persists across nav.
-    });
-  }
+  // Auto-close drawer on route change
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [loc.pathname]);
 
   const Sidebar = (
     <>

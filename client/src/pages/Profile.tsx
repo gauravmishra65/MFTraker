@@ -36,17 +36,23 @@ export default function Profile() {
   const [me, setMe] = useState<Me | null>(null);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [form, setForm] = useState<Me>({} as Me);
 
   async function load() {
-    const { data } = await api.get("/user/me");
-    const meData = data as Me;
-    setMe(meData);
-    setForm({
-      ...meData,
-      dob: meData.dob ? new Date(meData.dob).toISOString().slice(0, 10) : "",
-      investmentGoals: meData.investmentGoals ?? []
-    });
+    try {
+      setLoadError(false);
+      const { data } = await api.get("/user/me");
+      const meData = data as Me;
+      setMe(meData);
+      setForm({
+        ...meData,
+        dob: meData.dob ? new Date(meData.dob).toISOString().slice(0, 10) : "",
+        investmentGoals: meData.investmentGoals ?? []
+      });
+    } catch {
+      setLoadError(true);
+    }
   }
 
   useEffect(() => { load(); }, []);
@@ -83,7 +89,9 @@ export default function Profile() {
     });
   }
 
-  if (!me) return <div className="text-sm text-slate-500">Loading…</div>;
+  if (!me) return loadError
+    ? <div className="text-sm text-red-600 bg-red-50 dark:bg-red-900/20 dark:text-red-400 rounded-md px-4 py-3">Failed to load profile. <button onClick={load} className="underline">Retry</button></div>
+    : <div className="text-sm text-slate-500 animate-pulse">Loading...</div>;
 
   const completeness = computeCompleteness(me);
 

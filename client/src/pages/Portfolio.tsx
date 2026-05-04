@@ -12,11 +12,40 @@ import { Download, Plus } from "lucide-react";
 
 const SECTOR_COLORS = ["#2f8df8", "#16a34a", "#f59e0b", "#dc2626", "#9333ea", "#0ea5e9", "#65a30d", "#475569", "#ec4899"];
 
+interface Holding {
+  id: string;
+  symbol: string;
+  name: string;
+  instrumentType: string;
+  quantity: number;
+  avgPrice: number;
+  invested: number;
+  ltp: number;
+  currentValue: number;
+  pnl: number;
+  pnlPct: number;
+  dayChange: number;
+  sector: string | null;
+}
+
+interface PortfolioSummary {
+  invested: number;
+  currentValue: number;
+  pnl: number;
+  pnlPct: number;
+  dayChange: number;
+}
+
+interface PortfolioData {
+  holdings: Holding[];
+  summary: PortfolioSummary;
+}
+
 export default function Portfolio() {
   const qc = useQueryClient();
   const portfolio = useQuery({
     queryKey: ["portfolio"],
-    queryFn: async () => (await api.get("/portfolio")).data as { holdings: any[]; summary: any },
+    queryFn: async () => (await api.get("/portfolio")).data as PortfolioData,
     refetchInterval: 15_000
   });
 
@@ -43,6 +72,12 @@ export default function Portfolio() {
           <DownloadButton label="CSV" data={portfolio.data?.holdings ?? []} />
         </div>
       </div>
+
+      {portfolio.isError && (
+        <div className="text-sm text-red-600 bg-red-50 dark:bg-red-900/20 dark:text-red-400 rounded-md px-4 py-3">
+          Failed to load portfolio. Please try again.
+        </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Stat label="Invested"      value={formatINR(portfolio.data?.summary?.invested, { compact: true })} />
@@ -122,8 +157,7 @@ export default function Portfolio() {
   );
 }
 
-/** Client-side CSV download from portfolio data. */
-function DownloadButton({ label, data }: { label: string; data: any[] }) {
+function DownloadButton({ label, data }: { label: string; data: Holding[] }) {
   const [loading, setLoading] = useState(false);
   async function go() {
     setLoading(true);
@@ -163,59 +197,91 @@ function Stat({ label, value, sub, subClass }: { label: string; value: string; s
   );
 }
 
+const VALID_TX_TYPES = new Set(["BUY", "SELL", "SIP", "LUMPSUM", "REDEEM"]);
+
 function AddTransactionModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
   const [form, setForm] = useState({
     symbolQuery: "",
     stockId: "",
-    type: "BUY" as "BUY" | "SELL" | "SIP" | "LUMPSUM" | "REDEEM",
+    type: "BUY" as string,
     date: new Date().toISOString().slice(0, 10),
     quantity: "",
     price: "",
     brokerage: "0"
   });
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [results, setResults] = useState<any[]>([]);
+
+  function validate(): boolean {
+    const errs: Record<string, string> = {};
+    if (!form.stockId) errs.symbol = "Pick a stock from the search results";
+    if (!VALID_TX_TYPES.has(form.type)) errs.type = "Invalid transaction type";
+    if (!form.date) errs.date = "Date is required";
+    else if (new Date(form.date) > new Date()) errs.date = "Date cannot be in the future";
+    const qty = Number(form.quantity);
+    if (!form.quantity) errs.quantity = "Quantity is required";
+    else if (!Number.isFinite(qty) || qty <= 0) errs.quantity = "Must be a positive number";
+    else if (qty > 1e9) errs.quantity = "Quantity is too large";
+    const price = Number(form.price);
+    if (!form.price) errs.price = "Price is required";
+    else if (!Number.isFinite(price) || price <= 0) errs.price = "Must be a positive number";
+    else if (price > 1e9) errs.price = "Price is too large";
+    const brokerage = Number(form.brokerage);
+    if (!Number.isFinite(brokerage) || brokerage < 0) errs.brokerage = "Must be 0 or positive";
+    else if (brokerage > 1e9) errs.brokerage = "Brokerage is too large";
+    setErrors(errs);
+    return Object.keys(errs).length === 0;
+  }
 
   const submit = useMutation({
     mutationFn: async () => {
-      if (!form.stockId) throw new Error("Pick a stock");
+      if (!validate()) throw new Error("Validation failed");
       await api.post("/portfolio/transactions", {
         stockId: form.stockId,
         type: form.type,
-        date: new Date(form.date),
+        date: new Date(form.date).toISOString(),
         quantity: Number(form.quantity),
         price: Number(form.price),
         brokerage: Number(form.brokerage)
       });
     },
     onSuccess: () => { toast.success("Transaction added"); onSuccess(); onClose(); },
-    onError: (e: any) => toast.error(e?.message ?? "Failed")
+    onError: (e: any) => {
+      const msg = e?.message ?? "Failed to add transaction";
+      if (msg !== "Validation failed") toast.error(msg);
+    }
   });
 
   async function search(q: string) {
-    setForm((f) => ({ ...f, symbolQuery: q }));
-    if (!q) return setResults([]);
-    const { data } = await api.get(`/stocks/search?q=${encodeURIComponent(q)}`);
-    setResults((data.results ?? []).filter((r: any) => r.local).slice(0, 5));
+    setForm((f) => ({ ...f, symbolQuery: q, stockId: "" }));
+    if (!q || q.length < 2) return setResults([]);
+    try {
+      const { data } = await api.get(`/stocks/search?q=${encodeURIComponent(q)}`);
+      setResults((data.results ?? []).slice(0, 5));
+    } catch {
+      setResults([]);
+    }
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-slate-200 dark:border-slate-800 p-5">
         <h2 className="text-lg font-semibold">Add transaction</h2>
         <div className="mt-4 space-y-3">
           <div className="relative">
             <Input
               label="Stock"
-              placeholder="Search by symbol or name…"
+              placeholder="Search by symbol or name..."
               value={form.symbolQuery}
               onChange={(e) => search(e.target.value)}
+              error={errors.symbol}
             />
             {results.length > 0 && (
-              <div className="absolute z-10 mt-1 left-0 right-0 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md shadow-lg">
+              <div className="absolute z-10 mt-1 left-0 right-0 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md shadow-lg max-h-48 overflow-y-auto">
                 {results.map((r) => (
                   <button
-                    key={r.symbol}
-                    onClick={() => { setForm((f) => ({ ...f, stockId: r.id ?? "", symbolQuery: r.name })); setResults([]); }}
+                    key={r.id ?? r.symbol}
+                    onClick={() => { setForm((f) => ({ ...f, stockId: r.id ?? "", symbolQuery: `${r.name} (${r.symbol})` })); setResults([]); setErrors((e) => { const { symbol, ...rest } = e; return rest; }); }}
                     className="w-full text-left px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800"
                   >
                     {r.name} <span className="text-xs text-slate-500">({r.symbol})</span>
@@ -226,11 +292,11 @@ function AddTransactionModal({ onClose, onSuccess }: { onClose: () => void; onSu
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-sm">Type</label>
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Type</label>
               <select
-                className="mt-1 w-full h-10 px-3 rounded-md text-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700"
+                className="mt-1 w-full h-10 px-3 rounded-md text-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
                 value={form.type}
-                onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as any }))}
+                onChange={(e) => setForm((f) => ({ ...f, type: e.target.value }))}
               >
                 <option value="BUY">Buy</option>
                 <option value="SELL">Sell</option>
@@ -239,10 +305,10 @@ function AddTransactionModal({ onClose, onSuccess }: { onClose: () => void; onSu
                 <option value="REDEEM">Redeem</option>
               </select>
             </div>
-            <Input label="Date" type="date" value={form.date} onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} />
-            <Input label="Quantity" type="number" step="0.0001" value={form.quantity} onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))} />
-            <Input label="Price (per unit)" type="number" step="0.01" value={form.price} onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))} />
-            <Input label="Brokerage" type="number" step="0.01" value={form.brokerage} onChange={(e) => setForm((f) => ({ ...f, brokerage: e.target.value }))} />
+            <Input label="Date" type="date" max={new Date().toISOString().slice(0, 10)} value={form.date} onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} error={errors.date} />
+            <Input label="Quantity" type="number" step="0.0001" min="0" value={form.quantity} onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))} error={errors.quantity} />
+            <Input label="Price (per unit)" type="number" step="0.01" min="0" value={form.price} onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))} error={errors.price} />
+            <Input label="Brokerage" type="number" step="0.01" min="0" value={form.brokerage} onChange={(e) => setForm((f) => ({ ...f, brokerage: e.target.value }))} error={errors.brokerage} />
           </div>
         </div>
         <div className="mt-5 flex justify-end gap-2">
