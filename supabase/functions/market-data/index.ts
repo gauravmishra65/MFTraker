@@ -16,6 +16,15 @@ const NSE_INDICES: { yahoo: string; display: string }[] = [
   { yahoo: "^CNXIT", display: "NIFTY IT" },
 ];
 
+// Representative NIFTY 50 constituents for movers
+const NIFTY50_SYMBOLS = [
+  "RELIANCE.NS","TCS.NS","HDFCBANK.NS","INFY.NS","ICICIBANK.NS",
+  "HINDUNILVR.NS","SBIN.NS","BHARTIARTL.NS","KOTAKBANK.NS","ITC.NS",
+  "LT.NS","AXISBANK.NS","ASIANPAINT.NS","MARUTI.NS","TITAN.NS",
+  "WIPRO.NS","HCLTECH.NS","BAJFINANCE.NS","SUNPHARMA.NS","ULTRACEMCO.NS",
+  "TATAMOTORS.NS","ADANIENT.NS","ONGC.NS","NTPC.NS","POWERGRID.NS",
+];
+
 const VALID_RANGES = new Set(["1d", "5d", "1mo", "3mo", "6mo", "1y", "5y", "max"]);
 const VALID_INTERVALS = new Set(["1m", "5m", "15m", "1d", "1wk", "1mo"]);
 const SYMBOL_RE = /^[A-Z0-9.\-^]{1,20}$/;
@@ -181,7 +190,35 @@ Deno.serve(async (req: Request) => {
     }
 
     if (movers === "true") {
-      return jsonRes(req, { gainers: [], losers: [] });
+      const moverResults: { symbol: string; name: string; price: number; changePct: number }[] = [];
+      const batchSize = 5;
+      for (let i = 0; i < NIFTY50_SYMBOLS.length; i += batchSize) {
+        const batch = NIFTY50_SYMBOLS.slice(i, i + batchSize);
+        await Promise.all(batch.map(async (sym) => {
+          try {
+            const yUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=1d&interval=1m&includePrepost=false`;
+            const res = await fetch(yUrl, {
+              headers: { "User-Agent": "Mozilla/5.0" },
+              signal: AbortSignal.timeout(6_000),
+            });
+            if (!res.ok) return;
+            const data = await res.json();
+            const meta = data?.chart?.result?.[0]?.meta;
+            if (!meta || typeof meta.regularMarketPrice !== "number" || typeof meta.previousClose !== "number" || meta.previousClose === 0) return;
+            const changePct = ((meta.regularMarketPrice - meta.previousClose) / meta.previousClose) * 100;
+            moverResults.push({
+              symbol: sym.replace(".NS", ""),
+              name: String(meta.shortName ?? sym).slice(0, 100),
+              price: meta.regularMarketPrice,
+              changePct,
+            });
+          } catch { /* skip */ }
+        }));
+      }
+      moverResults.sort((a, b) => b.changePct - a.changePct);
+      const gainers = moverResults.filter((m) => m.changePct > 0).slice(0, 6);
+      const losers = moverResults.filter((m) => m.changePct < 0).slice(-6).reverse();
+      return jsonRes(req, { gainers, losers });
     }
 
     // Fetch history
