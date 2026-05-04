@@ -192,16 +192,21 @@ Deno.serve(async (req: Request) => {
     if (movers === "true") {
       const settled = await Promise.allSettled(
         NIFTY50_SYMBOLS.map(async (sym) => {
-          const yUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=1d&interval=1m&includePrepost=false`;
-          const res = await fetch(yUrl, {
-            headers: { "User-Agent": "Mozilla/5.0" },
-            signal: AbortSignal.timeout(5_000),
-          });
-          if (!res.ok) throw new Error("bad status");
-          const data = await res.json();
-          const meta = data?.chart?.result?.[0]?.meta;
-          if (!meta || typeof meta.regularMarketPrice !== "number" || typeof meta.previousClose !== "number" || meta.previousClose === 0) throw new Error("no meta");
-          const changePct = ((meta.regularMarketPrice - meta.previousClose) / meta.previousClose) * 100;
+          const r = await fetch(
+            `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=1d&interval=1m&includePrepost=false`,
+            { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(8_000) }
+          );
+          if (!r.ok) throw new Error("bad status");
+          const d = await r.json();
+          const meta = d?.chart?.result?.[0]?.meta;
+          const prevClose = meta?.previousClose ?? meta?.chartPreviousClose;
+          if (
+            !meta ||
+            typeof meta.regularMarketPrice !== "number" ||
+            typeof prevClose !== "number" ||
+            prevClose === 0
+          ) throw new Error("no meta");
+          const changePct = ((meta.regularMarketPrice - prevClose) / prevClose) * 100;
           return {
             symbol: sym.replace(".NS", ""),
             name: String(meta.shortName ?? sym).slice(0, 100),
