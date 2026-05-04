@@ -1,0 +1,225 @@
+// Prisma schema for MF & Share Tracker
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- USERS ----------
+model User {
+  id              String   @id @default(uuid())
+  fullName        String
+  email           String   @unique
+  phone           String?
+  passwordHash    String?
+  googleId        String?  @unique
+  emailVerified   Boolean  @default(false)
+  twoFactorSecret String?
+  preferences     Json?    // theme, default watchlist, currency, etc.
+
+  // Investor profile (collected at registration; user-editable later)
+  dob                 DateTime?
+  pan                 String?  // 10-char Indian PAN, e.g. ABCDE1234F (stored uppercased)
+  city                String?
+  state               String?
+  investmentExperience String? // BEGINNER | INTERMEDIATE | ADVANCED
+  riskTolerance       String?  // CONSERVATIVE | MODERATE | AGGRESSIVE
+  annualIncomeRange   String?  // UNDER_5L | 5L_10L | 10L_25L | 25L_50L | OVER_50L | PREFER_NOT_SAY
+  investmentGoals     String[] @default([]) // RETIREMENT, WEALTH, CHILD_EDU, HOME, SHORT_TERM, TAX_SAVING
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  watchlists   WatchList[]
+  transactions PortfolioTransaction[]
+  holdings     PortfolioHolding[]
+  dividends    Dividend[]
+  alerts       Alert[]
+  searches     SearchHistory[]
+  resets       PasswordReset[]
+  activity     ActivityLog[]
+}
+
+model PasswordReset {
+  id        String   @id @default(uuid())
+  userId    String
+  otpHash   String
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
+}
+
+// ---------- INSTRUMENTS (master data) ----------
+model Stock {
+  id         String  @id @default(uuid())
+  symbol     String  @unique               // e.g. "RELIANCE"
+  yahooSymbol String @unique                // e.g. "RELIANCE.NS"
+  name       String
+  exchange   String                         // NSE | BSE
+  sector     String?
+  industry   String?
+  isin       String? @unique
+  marketCap  Float?
+  capCategory String?                       // LARGE | MID | SMALL
+  faceValue  Float?
+  description String?
+  logoUrl    String?
+  createdAt  DateTime @default(now())
+
+  watchlistItems WatchListItem[]
+  transactions   PortfolioTransaction[]
+  alerts         Alert[]
+}
+
+model MutualFund {
+  id           String   @id @default(uuid())
+  schemeCode   String   @unique
+  name         String
+  amc          String
+  category     String   // Equity | Debt | Hybrid | ELSS | Index
+  subCategory  String?
+  riskLevel    String?  // Low | Moderate | High | Very High
+  fundManager  String?
+  expenseRatio Float?
+  aum          Float?
+  minSip       Float?
+  minLumpsum   Float?
+  benchmark    String?
+  inceptionDate DateTime?
+  createdAt    DateTime @default(now())
+
+  watchlistItems WatchListItem[]
+  transactions   PortfolioTransaction[]
+}
+
+// ---------- WATCHLISTS ----------
+model WatchList {
+  id        String   @id @default(uuid())
+  userId    String
+  name      String
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items     WatchListItem[]
+  @@unique([userId, name])
+  @@index([userId])
+}
+
+model WatchListItem {
+  id           String   @id @default(uuid())
+  watchListId  String
+  stockId      String?
+  mfId         String?
+  position     Int      @default(0)
+  addedAt      DateTime @default(now())
+  watchList    WatchList   @relation(fields: [watchListId], references: [id], onDelete: Cascade)
+  stock        Stock?      @relation(fields: [stockId], references: [id], onDelete: Cascade)
+  mf           MutualFund? @relation(fields: [mfId], references: [id], onDelete: Cascade)
+  @@index([watchListId])
+}
+
+// ---------- PORTFOLIO ----------
+enum TxType {
+  BUY
+  SELL
+  SIP
+  LUMPSUM
+  REDEEM
+}
+
+model PortfolioTransaction {
+  id          String   @id @default(uuid())
+  userId      String
+  stockId     String?
+  mfId        String?
+  type        TxType
+  date        DateTime
+  quantity    Float
+  price       Float    // price per unit (or NAV for MF)
+  brokerage   Float    @default(0)
+  notes       String?
+  createdAt   DateTime @default(now())
+  user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stock Stock?      @relation(fields: [stockId], references: [id], onDelete: SetNull)
+  mf    MutualFund? @relation(fields: [mfId], references: [id], onDelete: SetNull)
+  @@index([userId])
+  @@index([userId, date])
+}
+
+// PortfolioHolding is a derived snapshot — recomputed when transactions change.
+model PortfolioHolding {
+  id              String   @id @default(uuid())
+  userId          String
+  instrumentType  String   // STOCK | MF
+  instrumentId    String   // stockId or mfId
+  symbol          String
+  name            String
+  quantity        Float
+  avgPrice        Float
+  invested        Float
+  updatedAt       DateTime @updatedAt
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, instrumentType, instrumentId])
+  @@index([userId])
+}
+
+model Dividend {
+  id        String   @id @default(uuid())
+  userId    String
+  symbol    String
+  amount    Float
+  perShare  Float?
+  date      DateTime
+  notes     String?
+  createdAt DateTime @default(now())
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
+}
+
+// ---------- ALERTS ----------
+enum AlertType {
+  PRICE_ABOVE
+  PRICE_BELOW
+  PCT_CHANGE
+  VOLUME_SPIKE
+}
+
+model Alert {
+  id          String    @id @default(uuid())
+  userId      String
+  stockId     String?
+  symbol      String
+  type        AlertType
+  threshold   Float
+  active      Boolean   @default(true)
+  triggeredAt DateTime?
+  createdAt   DateTime  @default(now())
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stock Stock? @relation(fields: [stockId], references: [id], onDelete: SetNull)
+  @@index([userId])
+}
+
+model SearchHistory {
+  id        String   @id @default(uuid())
+  userId    String
+  query     String
+  resultId  String?
+  createdAt DateTime @default(now())
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, createdAt])
+}
+
+model ActivityLog {
+  id        String   @id @default(uuid())
+  userId    String
+  action    String
+  detail    Json?
+  createdAt DateTime @default(now())
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, createdAt])
+}
