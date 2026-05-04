@@ -52,6 +52,10 @@ function rangeToChartArgs(range: string, interval: string) {
   return { period1: Math.floor(periodStart.getTime() / 1000), period2: Math.floor(now.getTime() / 1000), interval };
 }
 
+// In-memory movers cache — avoids hammering Yahoo on every Dashboard refetch
+const MOVERS_TTL = 5 * 60_000; // 5 minutes
+let moversCache: { data: { gainers: any[]; losers: any[] }; expiresAt: number } | null = null;
+
 // Simple in-memory rate limiter (per-IP, resets on cold start)
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT_WINDOW = 60_000;
@@ -190,16 +194,23 @@ Deno.serve(async (req: Request) => {
     }
 
     if (movers === "true") {
+      // Serve from cache if still fresh — avoids hammering Yahoo on every 60s Dashboard refetch
+      if (moversCache && Date.now() < moversCache.expiresAt) {
+        return jsonRes(req, moversCache.data);
+      }
+
       const settled = await Promise.allSettled(
         NIFTY50_SYMBOLS.map(async (sym) => {
+          // range=5d interval=1d: lightweight request; chartPreviousClose is always present
           const r = await fetch(
-            `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=1d&interval=1m&includePrepost=false`,
+            `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=5d&interval=1d&includePrepost=false`,
             { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(8_000) }
           );
           if (!r.ok) throw new Error("bad status");
           const d = await r.json();
           const meta = d?.chart?.result?.[0]?.meta;
-          const prevClose = meta?.previousClose ?? meta?.chartPreviousClose;
+          // previousClose is null for daily interval; chartPreviousClose is always populated
+          const prevClose = meta?.chartPreviousClose ?? meta?.previousClose;
           if (
             !meta ||
             typeof meta.regularMarketPrice !== "number" ||
@@ -223,7 +234,11 @@ Deno.serve(async (req: Request) => {
       moverResults.sort((a, b) => b.changePct - a.changePct);
       const gainers = moverResults.filter((m) => m.changePct > 0).slice(0, 6);
       const losers = [...moverResults].filter((m) => m.changePct < 0).reverse().slice(0, 6);
-      return jsonRes(req, { gainers, losers });
+      const result = { gainers, losers };
+
+      // Cache for 5 minutes so repeated Dashboard loads don't re-hit Yahoo
+      moversCache = { data: result, expiresAt: Date.now() + MOVERS_TTL };
+      return jsonRes(req, result);
     }
 
     // Fetch history
