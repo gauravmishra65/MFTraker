@@ -8,8 +8,6 @@ import { Link } from "react-router-dom";
 import { useAuthStore } from "@/store/auth";
 import toast from "react-hot-toast";
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? "";
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? "";
 
 interface PortfolioSummary {
   invested: number; currentValue: number; pnl: number; pnlPct: number; dayChange: number;
@@ -46,10 +44,12 @@ export default function Dashboard() {
   async function runSeed(mode: "stocks" | "mf" | "all") {
     setSeeding(true);
     setSeedResult(null);
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? "";
+    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? "";
     try {
       const res = await fetch(
-        `${SUPABASE_URL}/functions/v1/seed-data?mode=${mode}`,
-        { method: "POST", headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}`, apikey: SUPABASE_ANON_KEY } }
+        `${supabaseUrl}/functions/v1/seed-data?mode=${mode}`,
+        { method: "POST", headers: { Authorization: `Bearer ${anonKey}`, apikey: anonKey } }
       );
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Seed failed");
@@ -133,7 +133,7 @@ export default function Dashboard() {
               <span className="font-medium text-slate-700 dark:text-slate-200">{idx.displayName}</span>
               <span className="font-mono font-semibold">{idx.price?.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>
               <span className={classNames("font-mono text-xs", changeColor(idx.changePct))}>
-                {idx.changePct >= 0 ? "+" : ""}{idx.changePct?.toFixed(2)}%
+                {formatPct(idx.changePct)}
               </span>
             </div>
           ))}

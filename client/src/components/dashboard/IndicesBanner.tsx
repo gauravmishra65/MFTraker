@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { marketApi } from "@/lib/api";
 import { changeColor, classNames, formatPct } from "@/lib/format";
 
 interface Index {
@@ -13,10 +13,7 @@ interface Index {
 export default function IndicesBanner() {
   const { data } = useQuery({
     queryKey: ["indices"],
-    queryFn: async () => {
-      const { data } = await api.get("/market/indices");
-      return (data as { indices: Index[] }).indices;
-    },
+    queryFn: () => marketApi.getIndices(),
     refetchInterval: 30_000,
     staleTime: 20_000,
   });

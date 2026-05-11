@@ -23,16 +23,16 @@ async function edgeFetch<T>(path: string, opts: RequestInit = {}): Promise<T> {
   return res.json();
 }
 
-// Fetch quotes in batches of MAX_QUOTE_SYMBOLS to stay within the edge function limit
+// Fetch quotes in batches of MAX_QUOTE_SYMBOLS, all batches run in parallel
 async function fetchQuotesBatched(yahooSymbols: string[]): Promise<Record<string, any>> {
+  const batches: string[][] = [];
+  for (let i = 0; i < yahooSymbols.length; i += MAX_QUOTE_SYMBOLS)
+    batches.push(yahooSymbols.slice(i, i + MAX_QUOTE_SYMBOLS));
+  const settled = await Promise.allSettled(
+    batches.map((batch) => edgeFetch<Record<string, any>>(`/market-data?symbols=${encodeURIComponent(batch.join(","))}`))
+  );
   const results: Record<string, any> = {};
-  for (let i = 0; i < yahooSymbols.length; i += MAX_QUOTE_SYMBOLS) {
-    const batch = yahooSymbols.slice(i, i + MAX_QUOTE_SYMBOLS);
-    try {
-      const data = await edgeFetch<Record<string, any>>(`/market-data?symbols=${encodeURIComponent(batch.join(","))}`);
-      Object.assign(results, data);
-    } catch { /* quotes optional */ }
-  }
+  for (const r of settled) if (r.status === "fulfilled") Object.assign(results, r.value);
   return results;
 }
 
@@ -397,12 +397,6 @@ export const watchlistsApi = {
   async removeItem(id: string) {
     const { error } = await supabase.from("watchlist_items").delete().eq("id", id);
     if (error) throw error;
-  },
-
-  async getQuotes(yahooSymbols: string[]): Promise<any[]> {
-    if (yahooSymbols.length === 0) return [];
-    const qData = await fetchQuotesBatched(yahooSymbols);
-    return Object.entries(qData).map(([symbol, q]) => ({ symbol, ...q }));
   }
 };
 

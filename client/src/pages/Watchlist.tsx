@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 
-import { api, stocksApi, mfApi, watchlistsApi } from "@/lib/api";
+import { api, stocksApi, mfApi, watchlistsApi, marketApi } from "@/lib/api";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -12,7 +12,7 @@ import { Trash2, Plus, Search, X } from "lucide-react";
 interface WatchlistItem {
   id: string;
   stock?: { id: string; symbol: string; yahooSymbol: string; name: string } | null;
-  mf?: { id: string; schemeCode: string; name: string } | null;
+  mf?: { id: string; schemeCode: string; name: string; nav?: number | null } | null;
 }
 
 interface WatchlistData {
@@ -21,13 +21,6 @@ interface WatchlistData {
   items: WatchlistItem[];
 }
 
-interface QuoteData {
-  symbol: string;
-  price: number;
-  changePct: number;
-  high?: number;
-  low?: number;
-}
 
 interface SearchResult {
   id: string;
@@ -62,13 +55,13 @@ export default function Watchlist() {
 
   // Fetch only live quotes (no DB round-trip) for NSE symbols in the active list
   const yahooSymbols = useMemo(
-    () => items.map((it) => it.stock?.yahooSymbol).filter((s): s is string => !!s),
+    () => items.map((it) => it.stock?.yahooSymbol).filter((s): s is string => !!s).sort(),
     [items]
   );
 
   const live = useQuery({
     queryKey: ["watchlist-quotes", activeId, yahooSymbols.join(",")],
-    queryFn: () => watchlistsApi.getQuotes(yahooSymbols),
+    queryFn: () => marketApi.getQuotes(yahooSymbols),
     enabled: yahooSymbols.length > 0,
     refetchInterval: 15_000,
     staleTime: 10_000,
@@ -105,10 +98,7 @@ export default function Watchlist() {
     onError: (e: any) => toast.error(e?.message ?? "Failed to add item")
   });
 
-  const quotes = useMemo(
-    () => Object.fromEntries((live.data ?? []).map((q: QuoteData) => [q.symbol, q])),
-    [live.data]
-  );
+  const quotes = live.data ?? {};
 
   return (
     <div className="space-y-6">
@@ -178,14 +168,14 @@ export default function Watchlist() {
                       const q = ySym ? quotes[ySym] : null;
                       // For MF items use DB nav as price; live intraday not available via Yahoo
                       const isMf = !it.stock && !!it.mf;
-                      const price = isMf ? (it.mf as any)?.nav : q?.price;
+                      const price = isMf ? it.mf?.nav : q?.price;
                       const ch = q?.changePct;
                       return (
                         <tr key={it.id} className="border-t border-slate-100 dark:border-slate-800">
                           <td className="px-5 py-2">
                             <div className="font-medium">{it.stock?.name ?? it.mf?.name ?? "—"}</div>
                             <div className="text-xs text-slate-500">
-                              {it.stock?.symbol ?? (it.mf as any)?.schemeCode ?? ""}
+                              {it.stock?.symbol ?? it.mf?.schemeCode ?? ""}
                               {isMf && <span className="ml-1 text-[10px] text-slate-400">NAV</span>}
                             </div>
                           </td>

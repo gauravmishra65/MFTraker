@@ -41,7 +41,7 @@ export default function Alerts() {
 
   // Collect unique Yahoo-format symbols from active alerts for live price fetch
   const alertSymbols = useMemo(
-    () => [...new Set((alerts.data ?? []).map((a) => a.symbol).filter(Boolean))],
+    () => [...new Set((alerts.data ?? []).map((a) => a.symbol).filter(Boolean))].sort(),
     [alerts.data]
   );
 
@@ -53,10 +53,7 @@ export default function Alerts() {
     staleTime: 20_000,
   });
 
-  const quotes = useMemo(
-    () => Object.fromEntries(Object.entries(liveQuotes.data ?? {})),
-    [liveQuotes.data]
-  );
+  const quotes = liveQuotes.data ?? {};
 
   const remove = useMutation({
     mutationFn: async (id: string) => api.delete(`/alerts/${id}`),
