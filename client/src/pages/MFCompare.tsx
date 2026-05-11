@@ -51,19 +51,21 @@ export default function MFCompare() {
                   </tr>
                 </thead>
                 <tbody>
-                  {[
+                  {([
                     ["AMC", "amc"],
                     ["Category", "category"],
-                    ["Risk level", "riskLevel"],
-                    ["Expense ratio", "expenseRatio"],
+                    ["Sub-category", "sub_category"],
+                    ["Risk level", "risk_level"],
+                    ["Expense ratio (%)", "expense_ratio"],
                     ["AUM (Cr)", "aum"],
-                    ["Min SIP", "minSip"],
-                    ["Min lumpsum", "minLumpsum"],
-                    ["Fund manager", "fundManager"]
-                  ].map(([label, key]) => (
+                    ["Min SIP (₹)", "min_sip"],
+                    ["Min lumpsum (₹)", "min_lumpsum"],
+                    ["Fund manager", "fund_manager"],
+                    ["NAV", "nav"],
+                  ] as [string, string][]).map(([label, key]) => (
                     <tr key={key} className="border-t border-slate-100 dark:border-slate-800">
                       <td className="px-5 py-2 font-medium">{label}</td>
-                      {picked.map((f) => <td key={f.id} className="px-3 py-2">{(f as any)[key as string] ?? "—"}</td>)}
+                      {picked.map((f) => <td key={f.id} className="px-3 py-2">{(f as any)[key] ?? "—"}</td>)}
                     </tr>
                   ))}
                 </tbody>

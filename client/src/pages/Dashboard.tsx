@@ -66,6 +66,7 @@ export default function Dashboard() {
     queryKey: ["indices"],
     queryFn: () => marketApi.getIndices(),
     refetchInterval: 30_000,
+    staleTime: 20_000,
   });
 
   const portfolio = useQuery({
@@ -73,7 +74,9 @@ export default function Dashboard() {
     queryFn: async () => {
       const { data } = await api.get("/portfolio");
       return data as { summary: PortfolioSummary; holdings: Holding[] };
-    }
+    },
+    staleTime: 30_000,
+    refetchInterval: 60_000,
   });
 
   const movers = useQuery({
@@ -82,7 +85,8 @@ export default function Dashboard() {
       const { data } = await api.get("/market/movers");
       return data as { gainers: MoverItem[]; losers: MoverItem[] };
     },
-    refetchInterval: 60_000
+    refetchInterval: 60_000,
+    staleTime: 55_000,
   });
 
   const watchlists = useQuery({
@@ -90,7 +94,8 @@ export default function Dashboard() {
     queryFn: async () => {
       const { data } = await api.get("/watchlists");
       return (data as { watchlists: { id: string; name: string; items: WatchlistItemData[] }[] }).watchlists;
-    }
+    },
+    staleTime: 60_000,
   });
 
   const txs = useQuery({
@@ -98,7 +103,8 @@ export default function Dashboard() {
     queryFn: async () => {
       const { data } = await api.get("/portfolio/transactions");
       return ((data as { transactions: TransactionData[] }).transactions ?? []).slice(0, 5);
-    }
+    },
+    staleTime: 30_000,
   });
 
   const summary = portfolio.data?.summary;

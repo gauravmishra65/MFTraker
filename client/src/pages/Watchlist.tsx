@@ -50,15 +50,28 @@ export default function Watchlist() {
     }
   });
 
+  // Set the first watchlist as active once loaded, without overriding user selection
+  const firstId = watchlists.data?.[0]?.id ?? null;
   useEffect(() => {
-    if (watchlists.data && watchlists.data.length && !activeId) setActiveId(watchlists.data[0].id);
-  }, [watchlists.data, activeId]);
+    if (firstId && !activeId) setActiveId(firstId);
+  }, [firstId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Derive the items for the active watchlist directly from the already-loaded cache
+  const activeWatchlist = watchlists.data?.find((w) => w.id === activeId) ?? null;
+  const items: WatchlistItem[] = activeWatchlist?.items ?? [];
+
+  // Fetch only live quotes (no DB round-trip) for NSE symbols in the active list
+  const yahooSymbols = useMemo(
+    () => items.map((it) => it.stock?.yahooSymbol).filter((s): s is string => !!s),
+    [items]
+  );
 
   const live = useQuery({
-    queryKey: ["watchlist-live", activeId],
-    queryFn: async () => activeId ? (await api.get(`/watchlists/live?watchListId=${activeId}`)).data : null,
-    enabled: !!activeId,
-    refetchInterval: 15_000
+    queryKey: ["watchlist-quotes", activeId, yahooSymbols.join(",")],
+    queryFn: () => watchlistsApi.getQuotes(yahooSymbols),
+    enabled: yahooSymbols.length > 0,
+    refetchInterval: 15_000,
+    staleTime: 10_000,
   });
 
   const create = useMutation({
@@ -73,7 +86,10 @@ export default function Watchlist() {
 
   const remove = useMutation({
     mutationFn: async (itemId: string) => api.delete(`/watchlists/items/${itemId}`),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["watchlist-live", activeId] }); toast.success("Item removed"); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["watchlists"] });
+      toast.success("Item removed");
+    },
     onError: (e: any) => toast.error(e?.message ?? "Failed to remove item")
   });
 
@@ -83,17 +99,15 @@ export default function Watchlist() {
       await watchlistsApi.addItem(activeId, result.type === "stock" ? result.id : undefined, result.type === "mf" ? result.id : undefined);
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["watchlist-live", activeId] });
       qc.invalidateQueries({ queryKey: ["watchlists"] });
       toast.success("Added to watchlist");
     },
     onError: (e: any) => toast.error(e?.message ?? "Failed to add item")
   });
 
-  const items: WatchlistItem[] = live.data?.items ?? [];
   const quotes = useMemo(
-    () => Object.fromEntries((live.data?.quotes ?? []).map((q: QuoteData) => [q.symbol, q])),
-    [live.data?.quotes]
+    () => Object.fromEntries((live.data ?? []).map((q: QuoteData) => [q.symbol, q])),
+    [live.data]
   );
 
   return (
@@ -103,7 +117,7 @@ export default function Watchlist() {
         <NewWatchlist onCreate={(name) => create.mutate(name)} />
       </div>
 
-      {(watchlists.isError || live.isError) && (
+      {(watchlists.isError || live.isError) && !live.isLoading && (
         <div className="text-sm text-red-600 bg-red-50 dark:bg-red-900/20 dark:text-red-400 rounded-md px-4 py-3">
           Failed to load watchlist data. Please try again.
         </div>

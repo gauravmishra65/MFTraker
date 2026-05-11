@@ -60,7 +60,8 @@ export default function StockDetail() {
       const { data } = await api.get(`/stocks/quote/${encodeURIComponent(symbol)}`);
       return data as { stock: StockData | null; quote: QuoteData | null };
     },
-    refetchInterval: 5_000
+    refetchInterval: 15_000,
+    staleTime: 10_000,
   });
 
   const peers = useQuery({

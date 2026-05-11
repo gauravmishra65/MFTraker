@@ -293,27 +293,30 @@ async function fetchAMFIFunds(): Promise<any[]> {
     const trimmed = line.trim();
     if (!trimmed) continue;
 
-    // AMC name lines (no semicolons, not a header)
-    if (!trimmed.includes(";") && trimmed.length > 3) {
-      if (/mutual fund|amc|asset management|trustee/i.test(trimmed)) {
-        currentAmc = trimmed.replace(/\s+/g, " ").trim();
-      } else if (trimmed.startsWith("Open Ended") || trimmed.startsWith("Close Ended") || trimmed.startsWith("Interval Fund")) {
+    // Lines without semicolons are headers, AMC names, or category markers
+    if (!trimmed.includes(";")) {
+      if (trimmed.startsWith("Open Ended") || trimmed.startsWith("Close Ended") || trimmed.startsWith("Interval Fund")) {
         currentCategory = trimmed;
+      } else if (trimmed.length > 3 && !/^scheme name$/i.test(trimmed)) {
+        // Any non-data, non-category line is an AMC name
+        currentAmc = trimmed.replace(/\s+/g, " ").trim();
       }
       continue;
     }
 
     const parts = trimmed.split(";");
-    // AMFI format: SchemeCode;ISINDivPayoutGrowth;ISINDivReinvestment;SchemeName;NetAssetValue;Date
+    // AMFI format: SchemeCode;ISINDivPayout;ISINDivReinvestment;SchemeName;NAV;Date
     if (parts.length < 5) continue;
     const schemeCode = parts[0].trim();
     const schemeName = parts[3].trim();
     const navStr = parts[4].trim();
     const nav = parseFloat(navStr);
 
-    if (!schemeCode || !schemeName || isNaN(Number(schemeCode))) continue;
-    // Only include Growth / Direct Growth plans to avoid duplicates
-    if (!/growth/i.test(schemeName)) continue;
+    // schemeCode must be a non-empty numeric string
+    if (!schemeCode || !/^\d+$/.test(schemeCode) || !schemeName) continue;
+    // Include Growth and Direct plans; skip Dividend/IDCW payout/reinvestment duplicates
+    if (!/growth|direct/i.test(schemeName)) continue;
+    if (/dividend|idcw|payout|reinvest/i.test(schemeName)) continue;
 
     const { category, sub_category, risk_level } = inferCategory(schemeName + " " + currentCategory);
 
@@ -360,12 +363,12 @@ Deno.serve(async (req: Request) => {
 
     if (mode === "all" || mode === "stocks") {
       const BATCH = 50;
-      for (let i = 0; i < STOCKS.length; i += BATCH) {
-        const batch = STOCKS.slice(i, i + BATCH);
-        const { error } = await sb.from("stocks").upsert(batch, { onConflict: "symbol" });
-        if (error) return jsonRes({ error: `stocks batch ${i}: ${error.message}` }, 500);
-        stocksInserted += batch.length;
-      }
+      const batches: (typeof STOCKS)[] = [];
+      for (let i = 0; i < STOCKS.length; i += BATCH) batches.push(STOCKS.slice(i, i + BATCH));
+      const results = await Promise.all(batches.map((b) => sb.from("stocks").upsert(b, { onConflict: "symbol" })));
+      const firstErr = results.find((r) => r.error);
+      if (firstErr?.error) return jsonRes({ error: `stocks: ${firstErr.error.message}` }, 500);
+      stocksInserted = STOCKS.length;
     }
 
     if (mode === "all" || mode === "mf") {
@@ -377,14 +380,15 @@ Deno.serve(async (req: Request) => {
       }
 
       const BATCH = 200;
-      for (let i = 0; i < funds.length; i += BATCH) {
-        const batch = funds.slice(i, i + BATCH);
-        const { error } = await sb.from("mutual_funds").upsert(batch, { onConflict: "scheme_code" });
-        if (error) {
-          console.error("MF batch error at", i, error.message);
-        } else {
-          fundsInserted += batch.length;
-        }
+      const mfBatches: (typeof funds)[] = [];
+      for (let i = 0; i < funds.length; i += BATCH) mfBatches.push(funds.slice(i, i + BATCH));
+      const mfResults = await Promise.all(
+        mfBatches.map((b) => sb.from("mutual_funds").upsert(b, { onConflict: "scheme_code" }))
+      );
+      for (let i = 0; i < mfResults.length; i++) {
+        const { error } = mfResults[i];
+        if (error) console.error(`MF batch ${i * BATCH}: ${error.message}`);
+        else fundsInserted += mfBatches[i].length;
       }
     }
 

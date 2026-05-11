@@ -158,18 +158,17 @@ export const stocksApi = {
       exchange: s.exchange
     }));
 
-    if (results.length > 0) {
+    const needsQuotes = filters.minPrice != null || filters.maxPrice != null;
+    if (results.length > 0 && needsQuotes) {
       const quotes = await fetchQuotesBatched(results.map((r) => r.yahooSymbol));
       results = results.map((r) => ({ ...r, quote: quotes[r.yahooSymbol] ?? null }));
-      if (filters.minPrice != null || filters.maxPrice != null) {
-        results = results.filter((r) => {
-          const p = r.quote?.price;
-          if (p == null) return false;
-          if (filters.minPrice != null && p < filters.minPrice) return false;
-          if (filters.maxPrice != null && p > filters.maxPrice) return false;
-          return true;
-        });
-      }
+      results = results.filter((r) => {
+        const p = r.quote?.price;
+        if (p == null) return false;
+        if (filters.minPrice != null && p < filters.minPrice) return false;
+        if (filters.maxPrice != null && p > filters.maxPrice) return false;
+        return true;
+      });
     }
 
     return { results, total: count ?? 0 };
@@ -371,20 +370,10 @@ export const watchlistsApi = {
     if (error) throw error;
   },
 
-  async getLive(watchListId: string) {
-    const { data: wl, error } = await supabase
-      .from("watchlists")
-      .select("*, items:watchlist_items(*, stock:stocks(*), mf:mutual_funds(*))")
-      .eq("id", watchListId).maybeSingle();
-    if (error) throw error;
-    if (!wl) return { items: [], quotes: [] };
-    const symbols = (wl.items ?? []).map((i: any) => i.stock?.yahoo_symbol).filter(Boolean);
-    let quotes: any[] = [];
-    if (symbols.length > 0) {
-      const qData = await fetchQuotesBatched(symbols);
-      quotes = Object.entries(qData).map(([symbol, q]) => ({ symbol, ...q }));
-    }
-    return { items: wl.items ?? [], quotes };
+  async getQuotes(yahooSymbols: string[]): Promise<any[]> {
+    if (yahooSymbols.length === 0) return [];
+    const qData = await fetchQuotesBatched(yahooSymbols);
+    return Object.entries(qData).map(([symbol, q]) => ({ symbol, ...q }));
   }
 };
 
@@ -490,10 +479,7 @@ export const api = {
     if (path === "/watchlists") {
       return { data: await watchlistsApi.getAll() };
     }
-    if (path.startsWith("/watchlists/live")) {
-      const id = new URLSearchParams(path.split("?")[1]).get("watchListId") ?? "";
-      return { data: await watchlistsApi.getLive(id) };
-    }
+
     if (path === "/alerts") {
       return { data: await alertsApi.getAll() };
     }

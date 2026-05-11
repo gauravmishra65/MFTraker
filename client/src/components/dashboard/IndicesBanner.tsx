@@ -17,7 +17,8 @@ export default function IndicesBanner() {
       const { data } = await api.get("/market/indices");
       return (data as { indices: Index[] }).indices;
     },
-    refetchInterval: 5_000
+    refetchInterval: 30_000,
+    staleTime: 20_000,
   });
 
   const indices = data ?? [];

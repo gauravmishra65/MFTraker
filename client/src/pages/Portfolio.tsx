@@ -152,7 +152,10 @@ export default function Portfolio() {
         </Card>
       </div>
 
-      {showAdd && <AddTransactionModal onClose={() => setShowAdd(false)} onSuccess={() => qc.invalidateQueries({ queryKey: ["portfolio"] })} />}
+      {showAdd && <AddTransactionModal onClose={() => setShowAdd(false)} onSuccess={() => {
+        qc.invalidateQueries({ queryKey: ["portfolio"] });
+        qc.invalidateQueries({ queryKey: ["recent-tx"] });
+      }} />}
     </div>
   );
 }
