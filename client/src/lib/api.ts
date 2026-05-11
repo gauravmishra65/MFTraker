@@ -2,6 +2,7 @@ import { supabase } from "./supabase";
 import { useAuthStore } from "@/store/auth";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? "";
+const MAX_QUOTE_SYMBOLS = 20;
 
 // Helper to call Supabase edge functions with auth
 async function edgeFetch<T>(path: string, opts: RequestInit = {}): Promise<T> {
@@ -20,6 +21,19 @@ async function edgeFetch<T>(path: string, opts: RequestInit = {}): Promise<T> {
     throw new Error(body.message ?? `HTTP ${res.status}`);
   }
   return res.json();
+}
+
+// Fetch quotes in batches of MAX_QUOTE_SYMBOLS to stay within the edge function limit
+async function fetchQuotesBatched(yahooSymbols: string[]): Promise<Record<string, any>> {
+  const results: Record<string, any> = {};
+  for (let i = 0; i < yahooSymbols.length; i += MAX_QUOTE_SYMBOLS) {
+    const batch = yahooSymbols.slice(i, i + MAX_QUOTE_SYMBOLS);
+    try {
+      const data = await edgeFetch<Record<string, any>>(`/market-data?symbols=${encodeURIComponent(batch.join(","))}`);
+      Object.assign(results, data);
+    } catch { /* quotes optional */ }
+  }
+  return results;
 }
 
 // ---------- AUTH ----------
@@ -145,20 +159,17 @@ export const stocksApi = {
     }));
 
     if (results.length > 0) {
-      try {
-        const symbols = results.map((r) => r.yahooSymbol).join(",");
-        const quotes = await edgeFetch<Record<string, any>>(`/market-data?symbols=${encodeURIComponent(symbols)}`);
-        results = results.map((r) => ({ ...r, quote: quotes[r.yahooSymbol] ?? null }));
-        if (filters.minPrice != null || filters.maxPrice != null) {
-          results = results.filter((r) => {
-            const p = r.quote?.price;
-            if (p == null) return false;
-            if (filters.minPrice != null && p < filters.minPrice) return false;
-            if (filters.maxPrice != null && p > filters.maxPrice) return false;
-            return true;
-          });
-        }
-      } catch { /* quotes optional */ }
+      const quotes = await fetchQuotesBatched(results.map((r) => r.yahooSymbol));
+      results = results.map((r) => ({ ...r, quote: quotes[r.yahooSymbol] ?? null }));
+      if (filters.minPrice != null || filters.maxPrice != null) {
+        results = results.filter((r) => {
+          const p = r.quote?.price;
+          if (p == null) return false;
+          if (filters.minPrice != null && p < filters.minPrice) return false;
+          if (filters.maxPrice != null && p > filters.maxPrice) return false;
+          return true;
+        });
+      }
     }
 
     return { results, total: count ?? 0 };
@@ -256,23 +267,16 @@ export const portfolioApi = {
     }
 
     const yahooSymbols = Object.values(stockMeta).map((m) => m.yahooSymbol).filter(Boolean);
-    let quotes: Record<string, any> = {};
-    let dayChanges: Record<string, number> = {};
-    if (yahooSymbols.length > 0) {
-      try {
-        const qData = await edgeFetch<Record<string, any>>(`/market-data?symbols=${encodeURIComponent(yahooSymbols.join(","))}`);
-        for (const [sym, q] of Object.entries(qData)) {
-          quotes[sym] = q.price;
-          dayChanges[sym] = q.change ?? 0;
-        }
-      } catch { /* quotes optional */ }
-    }
+    const liveQuotes: Record<string, any> = yahooSymbols.length > 0
+      ? await fetchQuotesBatched(yahooSymbols)
+      : {};
 
     const enriched = (holdings ?? []).map((h) => {
       const meta = stockMeta[h.instrument_id];
       const ySym = meta?.yahooSymbol;
-      const ltp = ySym ? quotes[ySym] ?? h.avg_price : h.avg_price;
-      const dayCh = ySym ? dayChanges[ySym] ?? 0 : 0;
+      const q = ySym ? liveQuotes[ySym] : null;
+      const ltp = q?.price ?? h.avg_price;
+      const dayCh = q?.change ?? 0;
       const currentValue = h.quantity * ltp;
       const pnl = currentValue - h.invested;
       const pnlPct = h.invested ? (pnl / h.invested) * 100 : 0;
@@ -280,11 +284,14 @@ export const portfolioApi = {
         id: h.id, symbol: h.symbol, name: h.name, instrumentType: h.instrument_type,
         quantity: h.quantity, avgPrice: h.avg_price, invested: h.invested,
         ltp, currentValue, pnl, pnlPct, dayChange: dayCh * h.quantity,
-        sector: meta?.sector ?? null
+        sector: meta?.sector ?? null,
       };
     });
 
-    const summary = enriched.reduce((s, h) => { s.invested += h.invested; s.currentValue += h.currentValue; s.dayChange += h.dayChange; return s; }, { invested: 0, currentValue: 0, dayChange: 0 });
+    const summary = enriched.reduce(
+      (acc, h) => { acc.invested += h.invested; acc.currentValue += h.currentValue; acc.dayChange += h.dayChange; return acc; },
+      { invested: 0, currentValue: 0, dayChange: 0 }
+    );
     const pnl = summary.currentValue - summary.invested;
     const pnlPct = summary.invested ? (pnl / summary.invested) * 100 : 0;
     return { holdings: enriched, summary: { ...summary, pnl, pnlPct } };
@@ -374,10 +381,8 @@ export const watchlistsApi = {
     const symbols = (wl.items ?? []).map((i: any) => i.stock?.yahoo_symbol).filter(Boolean);
     let quotes: any[] = [];
     if (symbols.length > 0) {
-      try {
-        const qData = await edgeFetch<Record<string, any>>(`/market-data?symbols=${encodeURIComponent(symbols.join(","))}`);
-        quotes = Object.entries(qData).map(([symbol, q]) => ({ symbol, ...q }));
-      } catch { /* quotes optional */ }
+      const qData = await fetchQuotesBatched(symbols);
+      quotes = Object.entries(qData).map(([symbol, q]) => ({ symbol, ...q }));
     }
     return { items: wl.items ?? [], quotes };
   }

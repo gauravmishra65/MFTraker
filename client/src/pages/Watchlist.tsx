@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 
@@ -91,8 +91,10 @@ export default function Watchlist() {
   });
 
   const items: WatchlistItem[] = live.data?.items ?? [];
-  const quotes: Record<string, QuoteData> = {};
-  for (const q of (live.data?.quotes ?? [])) quotes[q.symbol] = q;
+  const quotes = useMemo(
+    () => Object.fromEntries((live.data?.quotes ?? []).map((q: QuoteData) => [q.symbol, q])),
+    [live.data?.quotes]
+  );
 
   return (
     <div className="space-y-6">

@@ -337,6 +337,13 @@ async function fetchAMFIFunds(): Promise<any[]> {
   return funds;
 }
 
+function jsonRes(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -347,40 +354,27 @@ Deno.serve(async (req: Request) => {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
     const sb = createClient(supabaseUrl, serviceKey);
 
-    const url = new URL(req.url);
-    const mode = url.searchParams.get("mode") ?? "all"; // all | stocks | mf
-
+    const mode = new URL(req.url).searchParams.get("mode") ?? "all";
     let stocksInserted = 0;
     let fundsInserted = 0;
 
-    // ── Seed stocks ──────────────────────────────────────────────────────────
     if (mode === "all" || mode === "stocks") {
       const BATCH = 50;
       for (let i = 0; i < STOCKS.length; i += BATCH) {
         const batch = STOCKS.slice(i, i + BATCH);
         const { error } = await sb.from("stocks").upsert(batch, { onConflict: "symbol" });
-        if (error) {
-          return new Response(JSON.stringify({ error: "stocks batch " + i + ": " + error.message }), {
-            status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
-        }
+        if (error) return jsonRes({ error: `stocks batch ${i}: ${error.message}` }, 500);
         stocksInserted += batch.length;
       }
     }
 
-    // ── Seed mutual funds from AMFI ──────────────────────────────────────────
     if (mode === "all" || mode === "mf") {
-      let funds: any[] = [];
+      let funds: any[];
       try {
         funds = await fetchAMFIFunds();
-      } catch (e: any) {
-        return new Response(JSON.stringify({ error: "AMFI fetch: " + e.message }), {
-          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+      } catch (e: unknown) {
+        return jsonRes({ error: `AMFI fetch: ${e instanceof Error ? e.message : String(e)}` }, 500);
       }
-
-      // First add nav column if it doesn't exist
-      await sb.rpc("exec_sql", { sql: "ALTER TABLE mutual_funds ADD COLUMN IF NOT EXISTS nav float8;" }).catch(() => {});
 
       const BATCH = 200;
       for (let i = 0; i < funds.length; i += BATCH) {
@@ -388,24 +382,19 @@ Deno.serve(async (req: Request) => {
         const { error } = await sb.from("mutual_funds").upsert(batch, { onConflict: "scheme_code" });
         if (error) {
           console.error("MF batch error at", i, error.message);
-          // continue on batch errors
         } else {
           fundsInserted += batch.length;
         }
       }
     }
 
-    const { count: stockCount } = await sb.from("stocks").select("*", { count: "exact", head: true });
-    const { count: fundCount } = await sb.from("mutual_funds").select("*", { count: "exact", head: true });
+    const [{ count: stockCount }, { count: fundCount }] = await Promise.all([
+      sb.from("stocks").select("*", { count: "exact", head: true }),
+      sb.from("mutual_funds").select("*", { count: "exact", head: true }),
+    ]);
 
-    return new Response(JSON.stringify({
-      ok: true,
-      seeded: { stocks: stocksInserted, mutual_funds: fundsInserted },
-      totals: { stocks: stockCount, mutual_funds: fundCount },
-    }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-  } catch (e: any) {
-    return new Response(JSON.stringify({ error: e.message }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return jsonRes({ ok: true, seeded: { stocks: stocksInserted, mutual_funds: fundsInserted }, totals: { stocks: stockCount, mutual_funds: fundCount } });
+  } catch (e: unknown) {
+    return jsonRes({ error: e instanceof Error ? e.message : String(e) }, 500);
   }
 });

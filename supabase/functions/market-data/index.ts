@@ -57,22 +57,34 @@ function rangeToChartArgs(range: string, interval: string) {
 
 // In-memory caches
 const MOVERS_TTL  = 5 * 60_000;
-const QUOTES_TTL  = 15_000; // 15s cache for individual quotes
+const QUOTES_TTL  = 15_000;
 const INDICES_TTL = 15_000;
+const QUOTES_CACHE_MAX = 500;
 
 let moversCache: { data: { gainers: any[]; losers: any[] }; exp: number } | null = null;
 let indicesCache: { data: any[]; exp: number } | null = null;
 const quotesCache = new Map<string, { data: any; exp: number }>();
 
-// Rate limiter
+function putQuoteCache(sym: string, entry: { data: any; exp: number }) {
+  // Evict oldest entries when at capacity
+  if (quotesCache.size >= QUOTES_CACHE_MAX) {
+    quotesCache.delete(quotesCache.keys().next().value!);
+  }
+  quotesCache.set(sym, entry);
+}
+
+// Rate limiter — cleaned up on each request to avoid setInterval keeping the function alive
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-setInterval(() => { const now = Date.now(); for (const [k,v] of rateLimitMap) if (now > v.resetAt) rateLimitMap.delete(k); }, 120_000);
 
 function checkRateLimit(ip: string): boolean {
   const now = Date.now();
+  // Inline cleanup: remove expired entries on every request (amortized O(1) typical)
+  for (const [k, v] of rateLimitMap) {
+    if (now > v.resetAt) rateLimitMap.delete(k);
+  }
   const e = rateLimitMap.get(ip);
   if (!e || now > e.resetAt) { rateLimitMap.set(ip, { count: 1, resetAt: now + 60_000 }); return true; }
-  return ++e.count <= 60; // raised to 60 req/min
+  return ++e.count <= 60;
 }
 
 function json(req: Request, body: unknown, status = 200): Response {
@@ -116,7 +128,7 @@ async function fetchYahooQuote(sym: string): Promise<any | null> {
       exchange: String(meta.exchangeName ?? "").slice(0, 50),
       updatedAt: Date.now(),
     };
-    quotesCache.set(sym, { data, exp: Date.now() + QUOTES_TTL });
+    putQuoteCache(sym, { data, exp: Date.now() + QUOTES_TTL });
     return data;
   } catch { return null; }
 }
