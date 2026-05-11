@@ -19,6 +19,7 @@ import watchlistRouter from "./routes/watchlist";
 import alertsRouter from "./routes/alerts";
 import marketRouter from "./routes/market";
 import userRouter from "./routes/user";
+import marketProxyRouter from "./routes/marketProxy";
 import { attachPriceStream } from "./ws/priceStream";
 import { openapi } from "./swagger";
 
@@ -42,6 +43,7 @@ app.use("/api/watchlists", watchlistRouter);
 app.use("/api/alerts", alertsRouter);
 app.use("/api/market", marketRouter);
 app.use("/api/user", userRouter);
+app.use("/api/proxy", marketProxyRouter);
 
 app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(openapi));
 
