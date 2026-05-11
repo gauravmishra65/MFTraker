@@ -21,7 +21,7 @@ const NSE_INDICES: { yahoo: string; display: string }[] = [
 const MOVERS_FALLBACK: string[] = [];
 
 const VALID_RANGES = new Set(["1d","5d","1mo","3mo","6mo","1y","5y","max"]);
-const VALID_INTERVALS = new Set(["1m","5m","15m","1d","1wk","1mo"]);
+const VALID_INTERVALS = new Set(["1m","5m","15m","30m","1h","1d","1wk","1mo"]);
 const SYMBOL_RE = /^[A-Z0-9.\-^&]{1,25}$/;
 const MAX_SYMBOLS = 20;
 
