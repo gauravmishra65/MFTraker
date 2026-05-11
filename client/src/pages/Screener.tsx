@@ -7,7 +7,12 @@ import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { changeColor, classNames, formatINR, formatPct } from "@/lib/format";
 
-const SECTORS = ["Energy", "IT", "Financials", "FMCG", "Telecom", "Construction", "Auto", "Consumer", "Pharma", "Cement", "Diversified"];
+const SECTORS = [
+  "Airlines","Auto","Cement","Chemicals","Consumer","Consumer Tech",
+  "Construction","Defence","Diversified","Energy","Fintech","FMCG",
+  "Financials","Healthcare","Industrials","Insurance","IT","Logistics",
+  "Metals","Mining","Power","Pharma","Realty","Retail","Telecom",
+];
 
 interface ScreenerResult {
   id: string;
@@ -103,8 +108,21 @@ export default function Screener() {
       )}
 
       <Card>
-        <CardHeader>
-          <CardTitle>Results {data ? <span className="text-slate-500 text-sm font-normal">({data.results.length} of {data.total})</span> : null}</CardTitle>
+        <CardHeader className="flex items-center justify-between flex-wrap gap-2">
+          <CardTitle>
+            Results{data ? <span className="text-slate-500 text-sm font-normal ml-1">({data.results.length} of {data.total})</span> : null}
+          </CardTitle>
+          <div className="flex items-center gap-1 text-xs text-slate-500">
+            <select
+              className="h-7 px-2 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
+              value={filters.pageSize}
+              onChange={(e) => updateFilters({ pageSize: Number(e.target.value) })}
+            >
+              <option value={25}>25 / page</option>
+              <option value={50}>50 / page</option>
+              <option value={100}>100 / page</option>
+            </select>
+          </div>
         </CardHeader>
         <CardBody>
           <div className="overflow-x-auto -mx-5">
@@ -119,28 +137,63 @@ export default function Screener() {
                 </tr>
               </thead>
               <tbody>
-                {(data?.results ?? []).map((r) => (
-                  <tr key={r.id} className="border-t border-slate-100 dark:border-slate-800">
-                    <td className="px-5 py-2">
-                      <div className="font-medium">{r.name}</div>
-                      <div className="text-xs text-slate-500">{r.symbol} · {r.capCategory ?? "—"}</div>
-                    </td>
-                    <td className="px-3 py-2">{r.sector ?? "—"}</td>
-                    <td className="px-3 py-2 text-right font-mono">{r.quote ? formatINR(r.quote.price) : "—"}</td>
-                    <td className={classNames("px-3 py-2 text-right font-mono", changeColor(r.quote?.changePct))}>
-                      {r.quote ? formatPct(r.quote.changePct) : "—"}
-                    </td>
-                    <td className="px-5 py-2 text-right">
-                      <Link to={`/stocks/${r.yahooSymbol}`} className="text-brand-600 hover:underline text-xs">View</Link>
-                    </td>
-                  </tr>
-                ))}
+                {isLoading
+                  ? Array.from({ length: 8 }).map((_, i) => (
+                      <tr key={i} className="border-t border-slate-100 dark:border-slate-800 animate-pulse">
+                        <td className="px-5 py-2"><div className="h-4 bg-slate-100 dark:bg-slate-800 rounded w-40 mb-1" /><div className="h-3 bg-slate-100 dark:bg-slate-800 rounded w-20" /></td>
+                        <td className="px-3 py-2"><div className="h-4 bg-slate-100 dark:bg-slate-800 rounded w-16" /></td>
+                        <td className="px-3 py-2"><div className="h-4 bg-slate-100 dark:bg-slate-800 rounded w-16 ml-auto" /></td>
+                        <td className="px-3 py-2"><div className="h-4 bg-slate-100 dark:bg-slate-800 rounded w-12 ml-auto" /></td>
+                        <td className="px-5 py-2" />
+                      </tr>
+                    ))
+                  : (data?.results ?? []).map((r) => (
+                      <tr key={r.id} className="border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+                        <td className="px-5 py-2">
+                          <div className="font-medium">{r.name}</div>
+                          <div className="text-xs text-slate-500">{r.symbol} · {r.exchange} · {r.capCategory ?? "—"}</div>
+                        </td>
+                        <td className="px-3 py-2 text-slate-600 dark:text-slate-400">{r.sector ?? "—"}</td>
+                        <td className="px-3 py-2 text-right font-mono">{r.quote ? formatINR(r.quote.price) : <span className="text-slate-300 dark:text-slate-600">—</span>}</td>
+                        <td className={classNames("px-3 py-2 text-right font-mono", changeColor(r.quote?.changePct))}>
+                          {r.quote ? formatPct(r.quote.changePct) : <span className="text-slate-300 dark:text-slate-600">—</span>}
+                        </td>
+                        <td className="px-5 py-2 text-right">
+                          <Link to={`/stocks/${r.yahooSymbol}`} className="text-brand-600 hover:underline text-xs">View</Link>
+                        </td>
+                      </tr>
+                    ))}
                 {!isLoading && (data?.results ?? []).length === 0 && (
-                  <tr><td colSpan={5} className="px-5 py-6 text-center text-slate-500 text-sm">No stocks match your filters.</td></tr>
+                  <tr><td colSpan={5} className="px-5 py-8 text-center text-slate-500 text-sm">No stocks match your filters.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
+
+          {/* Pagination */}
+          {data && data.total > filters.pageSize && (
+            <div className="flex items-center justify-between mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 text-sm">
+              <span className="text-slate-500 text-xs">
+                Page {filters.page} of {Math.ceil(data.total / filters.pageSize)}
+              </span>
+              <div className="flex gap-2">
+                <button
+                  disabled={filters.page <= 1}
+                  onClick={() => updateFilters({ page: filters.page - 1 })}
+                  className="px-3 h-8 rounded border border-slate-200 dark:border-slate-700 text-xs disabled:opacity-40 hover:bg-slate-50 dark:hover:bg-slate-800"
+                >
+                  Previous
+                </button>
+                <button
+                  disabled={filters.page >= Math.ceil(data.total / filters.pageSize)}
+                  onClick={() => updateFilters({ page: filters.page + 1 })}
+                  className="px-3 h-8 rounded border border-slate-200 dark:border-slate-700 text-xs disabled:opacity-40 hover:bg-slate-50 dark:hover:bg-slate-800"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </CardBody>
       </Card>
     </div>

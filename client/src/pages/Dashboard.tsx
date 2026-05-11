@@ -1,10 +1,15 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
-import { api } from "@/lib/api";
+import { api, marketApi } from "@/lib/api";
 import { changeColor, classNames, formatINR, formatPct } from "@/lib/format";
-import { ArrowDownRight, ArrowUpRight, Briefcase, TrendingDown, TrendingUp } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Briefcase, TrendingDown, TrendingUp, Database, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAuthStore } from "@/store/auth";
+import toast from "react-hot-toast";
+
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? "";
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? "";
 
 interface PortfolioSummary {
   invested: number; currentValue: number; pnl: number; pnlPct: number; dayChange: number;
@@ -35,6 +40,33 @@ interface TransactionData {
 
 export default function Dashboard() {
   const user = useAuthStore((s) => s.user);
+  const [seeding, setSeeding] = useState(false);
+  const [seedResult, setSeedResult] = useState<string | null>(null);
+
+  async function runSeed(mode: "stocks" | "mf" | "all") {
+    setSeeding(true);
+    setSeedResult(null);
+    try {
+      const res = await fetch(
+        `${SUPABASE_URL}/functions/v1/seed-data?mode=${mode}`,
+        { method: "POST", headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}`, apikey: SUPABASE_ANON_KEY } }
+      );
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Seed failed");
+      setSeedResult(`Done — stocks: ${json.totals?.stocks ?? "?"}, mutual funds: ${json.totals?.mutual_funds ?? "?"}`);
+      toast.success("Data seeded successfully");
+    } catch (e: any) {
+      toast.error(e.message ?? "Seed failed");
+    } finally {
+      setSeeding(false);
+    }
+  }
+
+  const indices = useQuery({
+    queryKey: ["indices"],
+    queryFn: () => marketApi.getIndices(),
+    refetchInterval: 30_000,
+  });
 
   const portfolio = useQuery({
     queryKey: ["portfolio"],
@@ -86,6 +118,60 @@ export default function Dashboard() {
           </button>
         </Link>
       </div>
+
+      {/* Live indices strip */}
+      {(indices.data ?? []).length > 0 && (
+        <div className="flex gap-4 flex-wrap">
+          {indices.data!.map((idx: any) => (
+            <div key={idx.symbol} className="flex items-center gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-4 py-2 text-sm">
+              <span className="font-medium text-slate-700 dark:text-slate-200">{idx.displayName}</span>
+              <span className="font-mono font-semibold">{idx.price?.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>
+              <span className={classNames("font-mono text-xs", changeColor(idx.changePct))}>
+                {idx.changePct >= 0 ? "+" : ""}{idx.changePct?.toFixed(2)}%
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Seed data admin panel */}
+      <details className="group">
+        <summary className="cursor-pointer flex items-center gap-2 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 select-none w-fit">
+          <Database className="w-3.5 h-3.5" />
+          Data management
+        </summary>
+        <div className="mt-3 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-200 dark:border-slate-700 space-y-3">
+          <p className="text-xs text-slate-500">Populate the database with NSE/BSE stocks and mutual funds from live sources.</p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => runSeed("stocks")}
+              disabled={seeding}
+              className="flex items-center gap-1.5 px-3 h-8 rounded-md text-xs font-medium bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
+            >
+              {seeding ? <RefreshCw className="w-3 h-3 animate-spin" /> : null}
+              Seed NSE/BSE stocks ({">"}200)
+            </button>
+            <button
+              onClick={() => runSeed("mf")}
+              disabled={seeding}
+              className="flex items-center gap-1.5 px-3 h-8 rounded-md text-xs font-medium bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
+            >
+              {seeding ? <RefreshCw className="w-3 h-3 animate-spin" /> : null}
+              Seed all mutual funds (AMFI)
+            </button>
+            <button
+              onClick={() => runSeed("all")}
+              disabled={seeding}
+              className="flex items-center gap-1.5 px-3 h-8 rounded-md text-xs font-medium bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50"
+            >
+              {seeding ? <RefreshCw className="w-3 h-3 animate-spin" /> : null}
+              Seed everything
+            </button>
+          </div>
+          {seeding && <p className="text-xs text-slate-400 animate-pulse">Fetching data — this may take 30–60 seconds for mutual funds…</p>}
+          {seedResult && <p className="text-xs text-green-600 dark:text-green-400">{seedResult}</p>}
+        </div>
+      </details>
 
       {portfolio.isError && (
         <div className="text-sm text-red-600 bg-red-50 dark:bg-red-900/20 dark:text-red-400 rounded-md px-4 py-3">

@@ -1,282 +1,237 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
-function getCorsHeaders(_req: Request): Record<string, string> {
-  return {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
-    "Access-Control-Max-Age": "86400",
-  };
-}
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+  "Access-Control-Max-Age": "86400",
+};
 
 const NSE_INDICES: { yahoo: string; display: string }[] = [
-  { yahoo: "^NSEI", display: "NIFTY 50" },
-  { yahoo: "^BSESN", display: "SENSEX" },
-  { yahoo: "^NSEBANK", display: "BANK NIFTY" },
-  { yahoo: "^CNXIT", display: "NIFTY IT" },
+  { yahoo: "^NSEI",    display: "NIFTY 50"   },
+  { yahoo: "^BSESN",  display: "SENSEX"      },
+  { yahoo: "^NSEBANK",display: "BANK NIFTY"  },
+  { yahoo: "^CNXIT",  display: "NIFTY IT"    },
+  { yahoo: "^NSMIDCP",display: "NIFTY MIDCAP"},
 ];
 
-// Representative NIFTY 50 constituents for movers
-const NIFTY50_SYMBOLS = [
+// Broad Nifty 500-ish universe for movers (50 symbols)
+const MOVERS_SYMBOLS = [
   "RELIANCE.NS","TCS.NS","HDFCBANK.NS","INFY.NS","ICICIBANK.NS",
   "HINDUNILVR.NS","SBIN.NS","BHARTIARTL.NS","KOTAKBANK.NS","ITC.NS",
   "LT.NS","AXISBANK.NS","ASIANPAINT.NS","MARUTI.NS","TITAN.NS",
   "WIPRO.NS","HCLTECH.NS","BAJFINANCE.NS","SUNPHARMA.NS","ULTRACEMCO.NS",
   "TATAMOTORS.NS","ADANIENT.NS","ONGC.NS","NTPC.NS","POWERGRID.NS",
+  "NESTLEIND.NS","BAJAJFINSV.NS","TATASTEEL.NS","JSWSTEEL.NS","HINDALCO.NS",
+  "TECHM.NS","DRREDDY.NS","CIPLA.NS","DIVISLAB.NS","BRITANNIA.NS",
+  "GRASIM.NS","COALINDIA.NS","EICHERMOT.NS","HEROMOTOCO.NS","INDUSINDBK.NS",
+  "ZOMATO.NS","IRCTC.NS","DMART.NS","TATAPOWER.NS","ADANIGREEN.NS",
+  "DLF.NS","GODREJCP.NS","MARICO.NS","DABUR.NS","TVSMOTOR.NS",
 ];
 
-const VALID_RANGES = new Set(["1d", "5d", "1mo", "3mo", "6mo", "1y", "5y", "max"]);
-const VALID_INTERVALS = new Set(["1m", "5m", "15m", "1d", "1wk", "1mo"]);
-const SYMBOL_RE = /^[A-Z0-9.\-^]{1,20}$/;
-const MAX_SYMBOLS = 10;
+const VALID_RANGES = new Set(["1d","5d","1mo","3mo","6mo","1y","5y","max"]);
+const VALID_INTERVALS = new Set(["1m","5m","15m","1d","1wk","1mo"]);
+const SYMBOL_RE = /^[A-Z0-9.\-^&]{1,25}$/;
+const MAX_SYMBOLS = 20;
 
 function sanitizeSymbol(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (!SYMBOL_RE.test(trimmed)) return null;
-  return trimmed;
+  const t = raw.trim().toUpperCase();
+  return SYMBOL_RE.test(t) ? t : null;
 }
 
 function rangeToChartArgs(range: string, interval: string) {
   const now = new Date();
-  const periodStart = new Date();
+  const p = new Date();
   switch (range) {
-    case "1d": periodStart.setDate(now.getDate() - 1); break;
-    case "5d": periodStart.setDate(now.getDate() - 7); break;
-    case "1mo": periodStart.setMonth(now.getMonth() - 1); break;
-    case "3mo": periodStart.setMonth(now.getMonth() - 3); break;
-    case "6mo": periodStart.setMonth(now.getMonth() - 6); break;
-    case "1y": periodStart.setFullYear(now.getFullYear() - 1); break;
-    case "5y": periodStart.setFullYear(now.getFullYear() - 5); break;
-    case "max": periodStart.setFullYear(now.getFullYear() - 25); break;
+    case "1d":  p.setDate(now.getDate() - 1); break;
+    case "5d":  p.setDate(now.getDate() - 7); break;
+    case "1mo": p.setMonth(now.getMonth() - 1); break;
+    case "3mo": p.setMonth(now.getMonth() - 3); break;
+    case "6mo": p.setMonth(now.getMonth() - 6); break;
+    case "1y":  p.setFullYear(now.getFullYear() - 1); break;
+    case "5y":  p.setFullYear(now.getFullYear() - 5); break;
+    case "max": p.setFullYear(now.getFullYear() - 25); break;
   }
-  return { period1: Math.floor(periodStart.getTime() / 1000), period2: Math.floor(now.getTime() / 1000), interval };
+  return { period1: Math.floor(p.getTime() / 1000), period2: Math.floor(now.getTime() / 1000), interval };
 }
 
-// In-memory movers cache — avoids hammering Yahoo on every Dashboard refetch
-const MOVERS_TTL = 5 * 60_000; // 5 minutes
-let moversCache: { data: { gainers: any[]; losers: any[] }; expiresAt: number } | null = null;
+// In-memory caches
+const MOVERS_TTL  = 5 * 60_000;
+const QUOTES_TTL  = 15_000; // 15s cache for individual quotes
+const INDICES_TTL = 15_000;
 
-// Simple in-memory rate limiter (per-IP, resets on cold start)
+let moversCache: { data: { gainers: any[]; losers: any[] }; exp: number } | null = null;
+let indicesCache: { data: any[]; exp: number } | null = null;
+const quotesCache = new Map<string, { data: any; exp: number }>();
+
+// Rate limiter
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-const RATE_LIMIT_WINDOW = 60_000;
-const RATE_LIMIT_MAX = 20;
+setInterval(() => { const now = Date.now(); for (const [k,v] of rateLimitMap) if (now > v.resetAt) rateLimitMap.delete(k); }, 120_000);
 
 function checkRateLimit(ip: string): boolean {
   const now = Date.now();
-  const entry = rateLimitMap.get(ip);
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW });
-    return true;
-  }
-  entry.count++;
-  return entry.count <= RATE_LIMIT_MAX;
+  const e = rateLimitMap.get(ip);
+  if (!e || now > e.resetAt) { rateLimitMap.set(ip, { count: 1, resetAt: now + 60_000 }); return true; }
+  return ++e.count <= 60; // raised to 60 req/min
 }
 
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, entry] of rateLimitMap) {
-    if (now > entry.resetAt) rateLimitMap.delete(ip);
-  }
-}, 120_000);
-
-function jsonRes(req: Request, body: unknown, status = 200, extra: Record<string, string> = {}): Response {
+function json(req: Request, body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...getCorsHeaders(req), "Content-Type": "application/json", ...extra },
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }
 
+async function fetchYahooQuote(sym: string): Promise<any | null> {
+  const cached = quotesCache.get(sym);
+  if (cached && Date.now() < cached.exp) return cached.data;
+
+  try {
+    const res = await fetch(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=1d&interval=1m&includePrepost=false`,
+      { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(8_000) }
+    );
+    if (!res.ok) return null;
+    const d = await res.json();
+    const meta = d?.chart?.result?.[0]?.meta;
+    if (!meta) return null;
+
+    const prevClose = meta.previousClose ?? meta.chartPreviousClose ?? 0;
+    const price = meta.regularMarketPrice ?? 0;
+    const data = {
+      symbol: sym,
+      name: String(meta.shortName ?? meta.longName ?? sym).slice(0, 200),
+      price,
+      change: prevClose ? price - prevClose : 0,
+      changePct: prevClose ? ((price - prevClose) / prevClose) * 100 : 0,
+      previousClose: prevClose || null,
+      open: meta.regularMarketOpen ?? null,
+      high: meta.regularMarketDayHigh ?? null,
+      low: meta.regularMarketDayLow ?? null,
+      volume: meta.regularMarketVolume ?? null,
+      marketCap: meta.marketCap ?? null,
+      fiftyTwoWeekHigh: meta.fiftyTwoWeekHigh ?? null,
+      fiftyTwoWeekLow: meta.fiftyTwoWeekLow ?? null,
+      currency: String(meta.currency ?? "INR").slice(0, 10),
+      exchange: String(meta.exchangeName ?? "").slice(0, 50),
+      updatedAt: Date.now(),
+    };
+    quotesCache.set(sym, { data, exp: Date.now() + QUOTES_TTL });
+    return data;
+  } catch { return null; }
+}
+
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { status: 200, headers: getCorsHeaders(req) });
-  }
+  if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders });
+  if (req.method !== "GET") return json(req, { error: "Method not allowed" }, 405);
 
-  if (req.method !== "GET") {
-    return jsonRes(req, { error: "Method not allowed" }, 405);
-  }
-
-  const clientIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
-    ?? req.headers.get("cf-connecting-ip")
-    ?? "unknown";
-  if (!checkRateLimit(clientIp)) {
-    return jsonRes(req, { error: "Rate limit exceeded" }, 429, { "Retry-After": "60" });
-  }
+  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  if (!checkRateLimit(ip)) return json(req, { error: "Rate limit exceeded" }, 429);
 
   try {
     const url = new URL(req.url);
     const symbolsParam = url.searchParams.get("symbols");
-    const indices = url.searchParams.get("indices");
-    const movers = url.searchParams.get("movers");
-    const history = url.searchParams.get("history");
-    const range = url.searchParams.get("range") ?? "1mo";
+    const indicesFlag  = url.searchParams.get("indices");
+    const moversFlag   = url.searchParams.get("movers");
+    const historyParam = url.searchParams.get("history");
+    const range    = url.searchParams.get("range") ?? "1mo";
     const interval = url.searchParams.get("interval") ?? "1d";
 
-    if (!VALID_RANGES.has(range)) {
-      return jsonRes(req, { error: "Invalid range parameter" }, 400);
-    }
-    if (!VALID_INTERVALS.has(interval)) {
-      return jsonRes(req, { error: "Invalid interval parameter" }, 400);
-    }
+    if (!VALID_RANGES.has(range))    return json(req, { error: "Invalid range" }, 400);
+    if (!VALID_INTERVALS.has(interval)) return json(req, { error: "Invalid interval" }, 400);
 
-    // Fetch quotes for given symbols
-    if (symbolsParam && !indices && !movers && !history) {
-      const rawSymbols = symbolsParam.split(",").filter(Boolean);
-      if (rawSymbols.length === 0 || rawSymbols.length > MAX_SYMBOLS) {
-        return jsonRes(req, { error: `Provide 1-${MAX_SYMBOLS} symbols` }, 400);
-      }
-
-      const symbols = rawSymbols.map(sanitizeSymbol).filter((s): s is string => s !== null);
-      if (symbols.length === 0) {
-        return jsonRes(req, { error: "No valid symbols provided" }, 400);
-      }
+    // ── Quote batch ──────────────────────────────────────────────────────────
+    if (symbolsParam) {
+      const raw = symbolsParam.split(",").filter(Boolean).slice(0, MAX_SYMBOLS);
+      const symbols = raw.map(sanitizeSymbol).filter((s): s is string => s !== null);
+      if (!symbols.length) return json(req, { error: "No valid symbols" }, 400);
 
       const results: Record<string, any> = {};
-      const fetchPromises = symbols.map(async (sym) => {
-        try {
-          const yUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=1d&interval=1m&includePrepost=false`;
-          const res = await fetch(yUrl, {
-            headers: { "User-Agent": "Mozilla/5.0" },
-            signal: AbortSignal.timeout(8_000),
-          });
-          if (!res.ok) return;
-          const data = await res.json();
-          const meta = data?.chart?.result?.[0]?.meta;
-          if (!meta) return;
-          results[sym] = {
-            symbol: sym,
-            name: String(meta.shortName ?? sym).slice(0, 200),
-            price: typeof meta.regularMarketPrice === "number" ? meta.regularMarketPrice : 0,
-            change: (typeof meta.regularMarketPrice === "number" && typeof meta.previousClose === "number")
-              ? meta.regularMarketPrice - meta.previousClose : 0,
-            changePct: (typeof meta.previousClose === "number" && meta.previousClose !== 0)
-              ? (((meta.regularMarketPrice ?? 0) - meta.previousClose) / meta.previousClose) * 100 : 0,
-            previousClose: typeof meta.previousClose === "number" ? meta.previousClose : null,
-            volume: typeof meta.regularMarketVolume === "number" ? meta.regularMarketVolume : null,
-            marketCap: typeof meta.marketCap === "number" ? meta.marketCap : null,
-            fiftyTwoWeekHigh: typeof meta.fiftyTwoWeekHigh === "number" ? meta.fiftyTwoWeekHigh : null,
-            fiftyTwoWeekLow: typeof meta.fiftyTwoWeekLow === "number" ? meta.fiftyTwoWeekLow : null,
-            currency: String(meta.currency ?? "INR").slice(0, 10),
-            exchange: String(meta.exchangeName ?? "").slice(0, 50),
-            updatedAt: Date.now(),
-          };
-        } catch { /* skip */ }
-      });
-
-      await Promise.all(fetchPromises);
-      return jsonRes(req, results);
+      await Promise.all(symbols.map(async (sym) => {
+        const q = await fetchYahooQuote(sym);
+        if (q) results[sym] = q;
+      }));
+      return json(req, results);
     }
 
-    // Fetch indices
-    if (indices === "true") {
-      const indicesData: any[] = [];
-      for (const idx of NSE_INDICES) {
-        try {
-          const yUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(idx.yahoo)}?range=1d&interval=1m&includePrepost=false`;
-          const res = await fetch(yUrl, {
-            headers: { "User-Agent": "Mozilla/5.0" },
-            signal: AbortSignal.timeout(8_000),
-          });
-          if (!res.ok) continue;
-          const data = await res.json();
-          const meta = data?.chart?.result?.[0]?.meta;
-          if (!meta) continue;
-          indicesData.push({
-            symbol: idx.yahoo, displayName: idx.display, name: idx.display,
-            price: typeof meta.regularMarketPrice === "number" ? meta.regularMarketPrice : 0,
-            change: (typeof meta.regularMarketPrice === "number" && typeof meta.previousClose === "number")
-              ? meta.regularMarketPrice - meta.previousClose : 0,
-            changePct: (typeof meta.previousClose === "number" && meta.previousClose !== 0)
-              ? (((meta.regularMarketPrice ?? 0) - meta.previousClose) / meta.previousClose) * 100 : 0,
-          });
-        } catch { /* skip */ }
+    // ── Indices ──────────────────────────────────────────────────────────────
+    if (indicesFlag === "true") {
+      if (indicesCache && Date.now() < indicesCache.exp) {
+        return json(req, { indices: indicesCache.data });
       }
-      return jsonRes(req, { indices: indicesData });
+      const data: any[] = [];
+      await Promise.all(NSE_INDICES.map(async (idx) => {
+        const q = await fetchYahooQuote(idx.yahoo);
+        if (q) data.push({ ...q, symbol: idx.yahoo, displayName: idx.display, name: idx.display });
+      }));
+      indicesCache = { data, exp: Date.now() + INDICES_TTL };
+      return json(req, { indices: data });
     }
 
-    if (movers === "true") {
-      // Serve from cache if still fresh — avoids hammering Yahoo on every 60s Dashboard refetch
-      if (moversCache && Date.now() < moversCache.expiresAt) {
-        return jsonRes(req, moversCache.data);
-      }
+    // ── Movers ───────────────────────────────────────────────────────────────
+    if (moversFlag === "true") {
+      if (moversCache && Date.now() < moversCache.exp) return json(req, moversCache.data);
 
-      const settled = await Promise.allSettled(
-        NIFTY50_SYMBOLS.map(async (sym) => {
-          // range=5d interval=1d: lightweight request; chartPreviousClose is always present
-          const r = await fetch(
-            `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=5d&interval=1d&includePrepost=false`,
-            { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(8_000) }
-          );
-          if (!r.ok) throw new Error("bad status");
-          const d = await r.json();
-          const meta = d?.chart?.result?.[0]?.meta;
-          // previousClose is null for daily interval; chartPreviousClose is always populated
-          const prevClose = meta?.chartPreviousClose ?? meta?.previousClose;
-          if (
-            !meta ||
-            typeof meta.regularMarketPrice !== "number" ||
-            typeof prevClose !== "number" ||
-            prevClose === 0
-          ) throw new Error("no meta");
-          const changePct = ((meta.regularMarketPrice - prevClose) / prevClose) * 100;
-          return {
-            symbol: sym.replace(".NS", ""),
-            name: String(meta.shortName ?? sym).slice(0, 100),
-            price: meta.regularMarketPrice,
-            changePct,
-          };
-        })
-      );
+      const settled = await Promise.allSettled(MOVERS_SYMBOLS.map(async (sym) => {
+        const res = await fetch(
+          `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=5d&interval=1d&includePrepost=false`,
+          { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(8_000) }
+        );
+        if (!res.ok) throw new Error("bad status");
+        const d = await res.json();
+        const meta = d?.chart?.result?.[0]?.meta;
+        const prev = meta?.chartPreviousClose ?? meta?.previousClose;
+        if (!meta || typeof meta.regularMarketPrice !== "number" || !prev) throw new Error("no meta");
+        return {
+          symbol: sym.replace(/\.(NS|BO)$/, ""),
+          name: String(meta.shortName ?? sym).slice(0, 100),
+          price: meta.regularMarketPrice,
+          changePct: ((meta.regularMarketPrice - prev) / prev) * 100,
+        };
+      }));
 
-      const moverResults = settled
-        .filter((r): r is PromiseFulfilledResult<{ symbol: string; name: string; price: number; changePct: number }> => r.status === "fulfilled")
-        .map((r) => r.value);
+      const all = settled
+        .filter((r): r is PromiseFulfilledResult<any> => r.status === "fulfilled")
+        .map((r) => r.value)
+        .sort((a, b) => b.changePct - a.changePct);
 
-      moverResults.sort((a, b) => b.changePct - a.changePct);
-      const gainers = moverResults.filter((m) => m.changePct > 0).slice(0, 6);
-      const losers = [...moverResults].filter((m) => m.changePct < 0).reverse().slice(0, 6);
-      const result = { gainers, losers };
-
-      // Cache for 5 minutes so repeated Dashboard loads don't re-hit Yahoo
-      moversCache = { data: result, expiresAt: Date.now() + MOVERS_TTL };
-      return jsonRes(req, result);
+      const result = {
+        gainers: all.filter((m) => m.changePct > 0).slice(0, 8),
+        losers:  [...all].reverse().filter((m) => m.changePct < 0).slice(0, 8),
+      };
+      moversCache = { data: result, exp: Date.now() + MOVERS_TTL };
+      return json(req, result);
     }
 
-    // Fetch history
-    if (history) {
-      const sanitizedHistory = sanitizeSymbol(history);
-      if (!sanitizedHistory) {
-        return jsonRes(req, { error: "Invalid symbol format" }, 400);
-      }
+    // ── History ──────────────────────────────────────────────────────────────
+    if (historyParam) {
+      const sym = sanitizeSymbol(historyParam);
+      if (!sym) return json(req, { error: "Invalid symbol" }, 400);
       const args = rangeToChartArgs(range, interval);
       try {
-        const yUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sanitizedHistory)}?period1=${args.period1}&period2=${args.period2}&interval=${encodeURIComponent(interval)}&includePrepost=false`;
-        const res = await fetch(yUrl, {
-          headers: { "User-Agent": "Mozilla/5.0" },
-          signal: AbortSignal.timeout(15_000),
-        });
-        if (!res.ok) return jsonRes(req, { candles: [] });
-        const data = await res.json();
-        const result = data?.chart?.result?.[0];
-        const timestamps = result?.timestamp ?? [];
-        const quotes = result?.indicators?.quote?.[0] ?? {};
-        const candles = timestamps
+        const res = await fetch(
+          `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?period1=${args.period1}&period2=${args.period2}&interval=${interval}&includePrepost=false`,
+          { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(15_000) }
+        );
+        if (!res.ok) return json(req, { candles: [] });
+        const d = await res.json();
+        const result = d?.chart?.result?.[0];
+        const ts = result?.timestamp ?? [];
+        const q = result?.indicators?.quote?.[0] ?? {};
+        const candles = ts
           .map((t: number, i: number) => ({
-            t,
-            o: typeof quotes.open?.[i] === "number" ? quotes.open[i] : (quotes.close?.[i] ?? 0),
-            h: typeof quotes.high?.[i] === "number" ? quotes.high[i] : (quotes.close?.[i] ?? 0),
-            l: typeof quotes.low?.[i] === "number" ? quotes.low[i] : (quotes.close?.[i] ?? 0),
-            c: typeof quotes.close?.[i] === "number" ? quotes.close[i] : 0,
-            v: typeof quotes.volume?.[i] === "number" ? quotes.volume[i] : 0,
+            t, o: q.open?.[i] ?? q.close?.[i] ?? 0,
+            h: q.high?.[i] ?? q.close?.[i] ?? 0,
+            l: q.low?.[i]  ?? q.close?.[i] ?? 0,
+            c: q.close?.[i] ?? 0, v: q.volume?.[i] ?? 0,
           }))
-          .filter((c: any) => typeof c.c === "number" && c.c > 0);
-        return jsonRes(req, { candles });
-      } catch {
-        return jsonRes(req, { candles: [] });
-      }
+          .filter((c: any) => c.c > 0);
+        return json(req, { candles });
+      } catch { return json(req, { candles: [] }); }
     }
 
-    return jsonRes(req, { error: "No action specified. Use ?symbols=, ?indices=true, ?movers=true, or ?history=" }, 400);
+    return json(req, { error: "Use ?symbols=, ?indices=true, ?movers=true, or ?history=" }, 400);
   } catch {
-    return jsonRes(req, { error: "An unexpected error occurred" }, 500);
+    return json(req, { error: "Unexpected error" }, 500);
   }
 });
