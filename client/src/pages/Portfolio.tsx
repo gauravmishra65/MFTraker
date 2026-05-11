@@ -3,14 +3,14 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
-import { api, portfolioApi, stocksApi } from "@/lib/api";
+import { api, portfolioApi, stocksApi, mfApi } from "@/lib/api";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { changeColor, classNames, formatINR, formatPct } from "@/lib/format";
 import { CircleAlert as AlertCircle, CircleCheck as CheckCircle2, Download, Plus, Upload, X } from "lucide-react";
 
-const SECTOR_COLORS = ["#2f8df8", "#16a34a", "#f59e0b", "#dc2626", "#9333ea", "#0ea5e9", "#65a30d", "#475569", "#ec4899"];
+const SECTOR_COLORS = ["#2f8df8", "#16a34a", "#f59e0b", "#dc2626", "#0ea5e9", "#65a30d", "#475569", "#ec4899"];
 
 interface Holding {
   id: string;
@@ -46,7 +46,7 @@ export default function Portfolio() {
   const portfolio = useQuery({
     queryKey: ["portfolio"],
     queryFn: async () => (await api.get("/portfolio")).data as PortfolioData,
-    refetchInterval: 15_000
+    refetchInterval: 15_000,
   });
 
   const sectorData = useMemo(() => {
@@ -61,6 +61,11 @@ export default function Portfolio() {
   const [showAdd, setShowAdd] = useState(false);
   const [showImport, setShowImport] = useState(false);
 
+  function invalidate() {
+    qc.invalidateQueries({ queryKey: ["portfolio"] });
+    qc.invalidateQueries({ queryKey: ["recent-tx"] });
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-end justify-between flex-wrap gap-3">
@@ -69,8 +74,12 @@ export default function Portfolio() {
           <p className="text-sm text-slate-500 mt-1">Holdings, allocation and live P&amp;L</p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <Button onClick={() => setShowImport(true)} variant="secondary"><Upload className="w-4 h-4" /> Import CSV</Button>
-          <Button onClick={() => setShowAdd(true)} variant="primary"><Plus className="w-4 h-4" /> Add transaction</Button>
+          <Button onClick={() => setShowImport(true)} variant="secondary">
+            <Upload className="w-4 h-4" /> Import CSV
+          </Button>
+          <Button onClick={() => setShowAdd(true)} variant="primary">
+            <Plus className="w-4 h-4" /> Add transaction
+          </Button>
           <DownloadButton label="Export CSV" data={portfolio.data?.holdings ?? []} />
         </div>
       </div>
@@ -82,10 +91,10 @@ export default function Portfolio() {
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Stat label="Invested"      value={formatINR(portfolio.data?.summary?.invested, { compact: true })} />
+        <Stat label="Invested"      value={formatINR(portfolio.data?.summary?.invested,     { compact: true })} />
         <Stat label="Current value" value={formatINR(portfolio.data?.summary?.currentValue, { compact: true })} />
-        <Stat label="P&L"           value={formatINR(portfolio.data?.summary?.pnl, { compact: true })} sub={formatPct(portfolio.data?.summary?.pnlPct)} subClass={changeColor(portfolio.data?.summary?.pnl)} />
-        <Stat label="Day's change"  value={formatINR(portfolio.data?.summary?.dayChange, { compact: true })} subClass={changeColor(portfolio.data?.summary?.dayChange)} />
+        <Stat label="P&L"           value={formatINR(portfolio.data?.summary?.pnl,          { compact: true })} sub={formatPct(portfolio.data?.summary?.pnlPct)} subClass={changeColor(portfolio.data?.summary?.pnl)} />
+        <Stat label="Day's change"  value={formatINR(portfolio.data?.summary?.dayChange,    { compact: true })} subClass={changeColor(portfolio.data?.summary?.dayChange)} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -96,10 +105,11 @@ export default function Portfolio() {
               <table className="w-full text-sm">
                 <thead className="text-xs uppercase tracking-wide text-slate-500">
                   <tr>
-                    <th className="text-left px-5 py-2">Symbol</th>
+                    <th className="text-left px-5 py-2">Symbol / Fund</th>
+                    <th className="text-left px-3 py-2">Type</th>
                     <th className="text-right px-3 py-2">Qty</th>
                     <th className="text-right px-3 py-2">Avg</th>
-                    <th className="text-right px-3 py-2">LTP</th>
+                    <th className="text-right px-3 py-2">LTP / NAV</th>
                     <th className="text-right px-3 py-2">Invested</th>
                     <th className="text-right px-3 py-2">Value</th>
                     <th className="text-right px-5 py-2">P&L</th>
@@ -111,6 +121,16 @@ export default function Portfolio() {
                       <td className="px-5 py-2">
                         <div className="font-medium">{h.symbol}</div>
                         <div className="text-xs text-slate-500 truncate max-w-xs">{h.name}</div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className={classNames(
+                          "text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full font-medium",
+                          h.instrumentType === "MF"
+                            ? "bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                            : "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                        )}>
+                          {h.instrumentType === "MF" ? "MF" : "Stock"}
+                        </span>
                       </td>
                       <td className="px-3 py-2 text-right font-mono">{h.quantity}</td>
                       <td className="px-3 py-2 text-right font-mono">{formatINR(h.avgPrice)}</td>
@@ -124,7 +144,7 @@ export default function Portfolio() {
                     </tr>
                   ))}
                   {!portfolio.data?.holdings?.length && (
-                    <tr><td colSpan={7} className="px-5 py-6 text-center text-slate-500 text-sm">No holdings yet.</td></tr>
+                    <tr><td colSpan={8} className="px-5 py-6 text-center text-slate-500 text-sm">No holdings yet.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -133,7 +153,7 @@ export default function Portfolio() {
         </Card>
 
         <Card>
-          <CardHeader><CardTitle>Sector allocation</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Sector / Category allocation</CardTitle></CardHeader>
           <CardBody>
             <div className="h-72">
               {sectorData.length === 0 ? (
@@ -154,18 +174,13 @@ export default function Portfolio() {
         </Card>
       </div>
 
-      {showAdd && <AddTransactionModal onClose={() => setShowAdd(false)} onSuccess={() => {
-        qc.invalidateQueries({ queryKey: ["portfolio"] });
-        qc.invalidateQueries({ queryKey: ["recent-tx"] });
-      }} />}
-
-      {showImport && <ImportCsvModal onClose={() => setShowImport(false)} onSuccess={() => {
-        qc.invalidateQueries({ queryKey: ["portfolio"] });
-        qc.invalidateQueries({ queryKey: ["recent-tx"] });
-      }} />}
+      {showAdd    && <AddTransactionModal onClose={() => setShowAdd(false)}    onSuccess={invalidate} />}
+      {showImport && <ImportCsvModal      onClose={() => setShowImport(false)} onSuccess={invalidate} />}
     </div>
   );
 }
+
+// ─── Shared helpers ───────────────────────────────────────────────────────────
 
 function DownloadButton({ label, data }: { label: string; data: Holding[] }) {
   const [loading, setLoading] = useState(false);
@@ -174,15 +189,14 @@ function DownloadButton({ label, data }: { label: string; data: Holding[] }) {
     try {
       const header = "Symbol,Name,Type,Quantity,AvgPrice,Invested,LTP,CurrentValue,P&L,P&L %\n";
       const rows = data.map((h) =>
-        [h.symbol, `"${(h.name ?? "").replace(/"/g, '""')}"`, h.instrumentType ?? "STOCK", h.quantity, h.avgPrice?.toFixed(2), h.invested?.toFixed(2), h.ltp?.toFixed(2), h.currentValue?.toFixed(2), h.pnl?.toFixed(2), h.pnlPct?.toFixed(2)].join(",")
+        [h.symbol, `"${(h.name ?? "").replace(/"/g, '""')}"`, h.instrumentType ?? "STOCK",
+         h.quantity, h.avgPrice?.toFixed(2), h.invested?.toFixed(2), h.ltp?.toFixed(2),
+         h.currentValue?.toFixed(2), h.pnl?.toFixed(2), h.pnlPct?.toFixed(2)].join(",")
       );
       const csv = header + rows.join("\n");
       const blob = new Blob([csv], { type: "text/csv" });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "portfolio.csv";
-      a.click();
+      const a = document.createElement("a"); a.href = url; a.download = "portfolio.csv"; a.click();
       URL.revokeObjectURL(url);
     } catch (e: any) {
       toast.error(e?.message ?? "Download failed");
@@ -207,38 +221,52 @@ function Stat({ label, value, sub, subClass }: { label: string; value: string; s
   );
 }
 
+// ─── Add Transaction Modal ────────────────────────────────────────────────────
+
+type InstrumentKind = "stock" | "mf";
 const VALID_TX_TYPES = new Set(["BUY", "SELL", "SIP", "LUMPSUM", "REDEEM"]);
 
 function AddTransactionModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
+  const [kind, setKind] = useState<InstrumentKind>("stock");
   const [form, setForm] = useState({
-    symbolQuery: "",
+    query: "",
     stockId: "",
+    mfId: "",
     type: "BUY" as string,
     date: new Date().toISOString().slice(0, 10),
     quantity: "",
     price: "",
-    brokerage: "0"
+    brokerage: "0",
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [results, setResults] = useState<any[]>([]);
 
+  // Reset instrument selection when kind switches
+  function switchKind(k: InstrumentKind) {
+    setKind(k);
+    setForm((f) => ({ ...f, query: "", stockId: "", mfId: "", type: k === "mf" ? "LUMPSUM" : "BUY" }));
+    setResults([]);
+    setErrors({});
+  }
+
   function validate(): boolean {
     const errs: Record<string, string> = {};
-    if (!form.stockId) errs.symbol = "Pick a stock from the search results";
-    if (!VALID_TX_TYPES.has(form.type)) errs.type = "Invalid transaction type";
+    if (kind === "stock" && !form.stockId) errs.query = "Pick a stock from the search results";
+    if (kind === "mf"    && !form.mfId)    errs.query = "Pick a mutual fund from the search results";
+    if (!VALID_TX_TYPES.has(form.type))    errs.type  = "Invalid transaction type";
     if (!form.date) errs.date = "Date is required";
     else if (new Date(form.date) > new Date()) errs.date = "Date cannot be in the future";
     const qty = Number(form.quantity);
-    if (!form.quantity) errs.quantity = "Quantity is required";
-    else if (!Number.isFinite(qty) || qty <= 0) errs.quantity = "Must be a positive number";
-    else if (qty > 1e9) errs.quantity = "Quantity is too large";
+    if (!form.quantity)                          errs.quantity = "Quantity is required";
+    else if (!Number.isFinite(qty) || qty <= 0)  errs.quantity = "Must be a positive number";
+    else if (qty > 1e9)                          errs.quantity = "Quantity is too large";
     const price = Number(form.price);
-    if (!form.price) errs.price = "Price is required";
+    if (!form.price)                              errs.price = "Price is required";
     else if (!Number.isFinite(price) || price <= 0) errs.price = "Must be a positive number";
-    else if (price > 1e9) errs.price = "Price is too large";
+    else if (price > 1e9)                         errs.price  = "Price is too large";
     const brokerage = Number(form.brokerage);
     if (!Number.isFinite(brokerage) || brokerage < 0) errs.brokerage = "Must be 0 or positive";
-    else if (brokerage > 1e9) errs.brokerage = "Brokerage is too large";
+    else if (brokerage > 1e9)                         errs.brokerage = "Brokerage is too large";
     setErrors(errs);
     return Object.keys(errs).length === 0;
   }
@@ -246,61 +274,102 @@ function AddTransactionModal({ onClose, onSuccess }: { onClose: () => void; onSu
   const submit = useMutation({
     mutationFn: async () => {
       if (!validate()) throw new Error("Validation failed");
-      await api.post("/portfolio/transactions", {
-        stockId: form.stockId,
-        type: form.type,
-        date: new Date(form.date).toISOString(),
-        quantity: Number(form.quantity),
-        price: Number(form.price),
-        brokerage: Number(form.brokerage)
+      await portfolioApi.addTransaction({
+        stockId:   kind === "stock" ? form.stockId : undefined,
+        mfId:      kind === "mf"    ? form.mfId    : undefined,
+        type:      form.type,
+        date:      new Date(form.date).toISOString(),
+        quantity:  Number(form.quantity),
+        price:     Number(form.price),
+        brokerage: Number(form.brokerage),
       });
     },
     onSuccess: () => { toast.success("Transaction added"); onSuccess(); onClose(); },
-    onError: (e: any) => {
-      const msg = e?.message ?? "Failed to add transaction";
-      if (msg !== "Validation failed") toast.error(msg);
-    }
+    onError:   (e: any) => { const m = e?.message ?? "Failed"; if (m !== "Validation failed") toast.error(m); },
   });
 
   async function search(q: string) {
-    setForm((f) => ({ ...f, symbolQuery: q, stockId: "" }));
+    setForm((f) => ({ ...f, query: q, stockId: "", mfId: "" }));
     if (!q || q.length < 2) return setResults([]);
     try {
-      const { data } = await api.get(`/stocks/search?q=${encodeURIComponent(q)}`);
-      setResults((data.results ?? []).slice(0, 5));
-    } catch {
-      setResults([]);
-    }
+      if (kind === "stock") {
+        const res = await stocksApi.search(q);
+        setResults(res.slice(0, 6));
+      } else {
+        const res = await mfApi.search(q);
+        setResults((res ?? []).slice(0, 6));
+      }
+    } catch { setResults([]); }
   }
+
+  function pickResult(r: any) {
+    if (kind === "stock") {
+      setForm((f) => ({ ...f, stockId: r.id, query: `${r.name} (${r.symbol})` }));
+    } else {
+      setForm((f) => ({ ...f, mfId: r.id, query: `${r.name}` }));
+    }
+    setResults([]);
+    setErrors((e) => { const { query, ...rest } = e; return rest; });
+  }
+
+  const isMf = kind === "mf";
+  const txTypes = isMf
+    ? [["SIP", "SIP"], ["LUMPSUM", "Lumpsum"], ["REDEEM", "Redeem"]]
+    : [["BUY", "Buy"], ["SELL", "Sell"]];
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-slate-200 dark:border-slate-800 p-5">
-        <h2 className="text-lg font-semibold">Add transaction</h2>
-        <div className="mt-4 space-y-3">
+        <h2 className="text-lg font-semibold mb-4">Add transaction</h2>
+
+        {/* Instrument type toggle */}
+        <div className="flex rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden mb-4 text-sm font-medium">
+          {(["stock", "mf"] as InstrumentKind[]).map((k) => (
+            <button
+              key={k}
+              onClick={() => switchKind(k)}
+              className={classNames(
+                "flex-1 py-2 transition-colors",
+                kind === k
+                  ? "bg-brand-600 text-white"
+                  : "text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+              )}
+            >
+              {k === "stock" ? "Stock" : "Mutual Fund"}
+            </button>
+          ))}
+        </div>
+
+        <div className="space-y-3">
+          {/* Search */}
           <div className="relative">
             <Input
-              label="Stock"
-              placeholder="Search by symbol or name..."
-              value={form.symbolQuery}
+              label={isMf ? "Mutual Fund" : "Stock"}
+              placeholder={isMf ? "Search by fund name or AMC…" : "Search by symbol or name…"}
+              value={form.query}
               onChange={(e) => search(e.target.value)}
-              error={errors.symbol}
+              error={errors.query}
             />
             {results.length > 0 && (
-              <div className="absolute z-10 mt-1 left-0 right-0 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md shadow-lg max-h-48 overflow-y-auto">
+              <div className="absolute z-10 mt-1 left-0 right-0 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md shadow-lg max-h-52 overflow-y-auto">
                 {results.map((r) => (
                   <button
-                    key={r.id ?? r.symbol}
-                    onClick={() => { setForm((f) => ({ ...f, stockId: r.id ?? "", symbolQuery: `${r.name} (${r.symbol})` })); setResults([]); setErrors((e) => { const { symbol, ...rest } = e; return rest; }); }}
-                    className="w-full text-left px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800"
+                    key={r.id}
+                    onClick={() => pickResult(r)}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800 border-b border-slate-100 dark:border-slate-800 last:border-0"
                   >
-                    {r.name} <span className="text-xs text-slate-500">({r.symbol})</span>
+                    <div className="font-medium truncate">{r.name}</div>
+                    <div className="text-xs text-slate-500">
+                      {isMf ? `${r.amc ?? ""} · ${r.scheme_code ?? r.id}` : r.symbol}
+                    </div>
                   </button>
                 ))}
               </div>
             )}
           </div>
+
           <div className="grid grid-cols-2 gap-3">
+            {/* Type */}
             <div>
               <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Type</label>
               <select
@@ -308,19 +377,20 @@ function AddTransactionModal({ onClose, onSuccess }: { onClose: () => void; onSu
                 value={form.type}
                 onChange={(e) => setForm((f) => ({ ...f, type: e.target.value }))}
               >
-                <option value="BUY">Buy</option>
-                <option value="SELL">Sell</option>
-                <option value="SIP">SIP</option>
-                <option value="LUMPSUM">Lumpsum</option>
-                <option value="REDEEM">Redeem</option>
+                {txTypes.map(([val, label]) => <option key={val} value={val}>{label}</option>)}
               </select>
+              {errors.type && <p className="text-xs text-red-500 mt-1">{errors.type}</p>}
             </div>
+
             <Input label="Date" type="date" max={new Date().toISOString().slice(0, 10)} value={form.date} onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} error={errors.date} />
-            <Input label="Quantity" type="number" step="0.0001" min="0" value={form.quantity} onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))} error={errors.quantity} />
-            <Input label="Price (per unit)" type="number" step="0.01" min="0" value={form.price} onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))} error={errors.price} />
-            <Input label="Brokerage" type="number" step="0.01" min="0" value={form.brokerage} onChange={(e) => setForm((f) => ({ ...f, brokerage: e.target.value }))} error={errors.brokerage} />
+            <Input label={isMf ? "Units" : "Quantity"} type="number" step="0.0001" min="0" value={form.quantity} onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))} error={errors.quantity} />
+            <Input label={isMf ? "NAV (per unit)" : "Price (per unit)"} type="number" step="0.01" min="0" value={form.price} onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))} error={errors.price} />
+            {!isMf && (
+              <Input label="Brokerage" type="number" step="0.01" min="0" value={form.brokerage} onChange={(e) => setForm((f) => ({ ...f, brokerage: e.target.value }))} error={errors.brokerage} />
+            )}
           </div>
         </div>
+
         <div className="mt-5 flex justify-end gap-2">
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
           <Button onClick={() => submit.mutate()} loading={submit.isPending}>Save</Button>
@@ -332,79 +402,99 @@ function AddTransactionModal({ onClose, onSuccess }: { onClose: () => void; onSu
 
 // ─── CSV Import ───────────────────────────────────────────────────────────────
 
-// Expected CSV columns (case-insensitive, flexible naming)
-const COL_ALIASES: Record<string, string[]> = {
-  symbol:    ["symbol", "ticker", "scrip", "stock", "nse", "bse"],
+// Column aliases per instrument kind
+const STOCK_COLS: Record<string, string[]> = {
+  symbol:    ["symbol", "ticker", "scrip", "stock", "nse", "bse", "isin"],
   type:      ["type", "transaction", "action", "tx_type", "txtype"],
   date:      ["date", "trade_date", "tradedate", "purchase_date"],
   quantity:  ["quantity", "qty", "units", "shares"],
-  price:     ["price", "rate", "buy_price", "purchase_price", "avg_price", "nav"],
+  price:     ["price", "rate", "buy_price", "purchase_price", "avg_price"],
   brokerage: ["brokerage", "commission", "charges", "fee", "fees"],
 };
 
-type CsvCol = keyof typeof COL_ALIASES;
+const MF_COLS: Record<string, string[]> = {
+  symbol:   ["scheme_code", "schemecode", "code", "amfi_code", "fund_code", "symbol"],
+  fundName: ["fund_name", "fundname", "scheme_name", "schemename", "name", "fund", "mf_name"],
+  type:     ["type", "transaction", "action", "tx_type", "txtype"],
+  date:     ["date", "trade_date", "tradedate", "purchase_date", "nav_date"],
+  quantity: ["quantity", "qty", "units"],
+  price:    ["price", "nav", "rate", "purchase_nav", "buy_nav"],
+};
+
+type StockCsvCol = keyof typeof STOCK_COLS;
+type MfCsvCol    = keyof typeof MF_COLS;
+type CsvCol      = StockCsvCol | MfCsvCol;
 
 interface ParsedRow {
-  _line: number;
-  symbol: string;
-  type: string;
-  date: string;
-  quantity: number;
-  price: number;
+  _line:     number;
+  symbol:    string;
+  fundName:  string;
+  type:      string;
+  date:      string;
+  quantity:  number;
+  price:     number;
   brokerage: number;
-  error?: string;
+  error?:    string;
 }
 
 function normaliseHeader(h: string): string {
   return h.toLowerCase().replace(/[\s_\-]/g, "");
 }
 
-function detectColumn(header: string): CsvCol | null {
-  const norm = normaliseHeader(header);
-  for (const [col, aliases] of Object.entries(COL_ALIASES)) {
-    if (aliases.some((a) => normaliseHeader(a) === norm)) return col as CsvCol;
-  }
-  return null;
+function autoMap(headers: string[], aliases: Record<string, string[]>): Partial<Record<CsvCol, number>> {
+  const mapping: Partial<Record<CsvCol, number>> = {};
+  headers.forEach((h, i) => {
+    const norm = normaliseHeader(h);
+    for (const [col, vals] of Object.entries(aliases)) {
+      if (!(col in mapping) && vals.some((a) => normaliseHeader(a) === norm)) {
+        mapping[col as CsvCol] = i;
+        break;
+      }
+    }
+  });
+  return mapping;
 }
 
 function parseDate(raw: string): string | null {
   const s = raw.trim();
-  // Formats: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, MM/DD/YYYY
-  const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (isoMatch) return s;
-  const dmyMatch = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-  if (dmyMatch) {
-    const [, a, b, y] = dmyMatch;
-    // Prefer DD/MM/YYYY interpretation for Indian market context
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const dmy = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (dmy) {
+    const [, a, b, y] = dmy;
     const d = parseInt(a, 10), m = parseInt(b, 10);
-    if (m > 12) return `${y}-${String(d).padStart(2, "0")}-${String(m).padStart(2, "0")}`;
-    return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    if (m > 12) return `${y}-${String(d).padStart(2,"0")}-${String(m).padStart(2,"0")}`;
+    return `${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
   }
-  // Try native Date parse as last resort
   const ts = Date.parse(s);
   if (!isNaN(ts)) return new Date(ts).toISOString().slice(0, 10);
   return null;
 }
 
-function normaliseType(raw: string): string {
+function normaliseType(raw: string, kind: InstrumentKind): string {
   const u = raw.trim().toUpperCase();
-  if (["BUY", "B", "PURCHASE"].includes(u)) return "BUY";
-  if (["SELL", "S", "SALE"].includes(u)) return "SELL";
-  if (["SIP"].includes(u)) return "SIP";
-  if (["LUMPSUM", "LUMP", "INVEST"].includes(u)) return "LUMPSUM";
-  if (["REDEEM", "REDEMPTION", "RED"].includes(u)) return "REDEEM";
+  if (kind === "mf") {
+    if (["BUY","B","PURCHASE","INVEST","LUMPSUM","LUMP"].includes(u) || !u) return "LUMPSUM";
+    if (["SIP","SYSTEMATIC"].includes(u)) return "SIP";
+    if (["SELL","S","REDEEM","REDEMPTION","RED"].includes(u)) return "REDEEM";
+  } else {
+    if (["BUY","B","PURCHASE"].includes(u) || !u) return "BUY";
+    if (["SELL","S","SALE"].includes(u)) return "SELL";
+    if (["SIP"].includes(u)) return "SIP";
+    if (["LUMPSUM","LUMP","INVEST"].includes(u)) return "LUMPSUM";
+    if (["REDEEM","REDEMPTION","RED"].includes(u)) return "REDEEM";
+  }
   return u;
 }
 
 function parseCsv(text: string): { headers: string[]; rows: string[][] } {
   const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim().split("\n");
-  const parse = (line: string): string[] => {
+  const parseLine = (line: string): string[] => {
     const out: string[] = [];
     let cur = "", inQ = false;
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
       if (inQ) {
-        if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+        if (ch === '"' && line[i+1] === '"') { cur += '"'; i++; }
         else if (ch === '"') inQ = false;
         else cur += ch;
       } else {
@@ -416,58 +506,62 @@ function parseCsv(text: string): { headers: string[]; rows: string[][] } {
     out.push(cur);
     return out.map((c) => c.trim());
   };
-  const headers = parse(lines[0]);
-  const rows = lines.slice(1).filter((l) => l.trim()).map(parse);
-  return { headers, rows };
+  return {
+    headers: parseLine(lines[0]),
+    rows: lines.slice(1).filter((l) => l.trim()).map(parseLine),
+  };
 }
 
 type ImportStep = "upload" | "map" | "preview" | "importing" | "done";
 
 interface ImportState {
-  step: ImportStep;
-  headers: string[];
-  rawRows: string[][];
-  mapping: Partial<Record<CsvCol, number>>;
-  parsed: ParsedRow[];
-  results: { ok: number; failed: number; errors: string[] };
+  step:           ImportStep;
+  kind:           InstrumentKind;
+  headers:        string[];
+  rawRows:        string[][];
+  mapping:        Partial<Record<CsvCol, number>>;
+  parsed:         ParsedRow[];
+  results:        { ok: number; failed: number; errors: string[] };
 }
+
+const STOCK_EXAMPLE_ROWS = [
+  ["RELIANCE","BUY","2024-01-15","10","2450.50","20"],
+  ["TCS","BUY","2024-02-01","5","3800.00","15"],
+  ["INFY","SELL","2024-03-10","3","1750.00","12"],
+];
+
+const MF_EXAMPLE_ROWS = [
+  ["120586","Parag Parikh Flexi Cap Fund","LUMPSUM","2024-01-15","250.123","5000"],
+  ["118989","SBI Small Cap Fund","SIP","2024-02-01","120.456","1000"],
+  ["120503","Axis Bluechip Fund","REDEEM","2024-03-10","95.789","3000"],
+];
 
 function ImportCsvModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<ImportState>({
-    step: "upload",
-    headers: [],
-    rawRows: [],
-    mapping: {},
-    parsed: [],
+    step: "upload", kind: "stock",
+    headers: [], rawRows: [], mapping: {}, parsed: [],
     results: { ok: 0, failed: 0, errors: [] },
   });
+  const [progress, setProgress] = useState(0);
 
-  // ── Step 1: file drop / select ────────────────────────────────────────────
-  const handleFile = useCallback((file: File) => {
+  const activeAliases = state.kind === "stock" ? STOCK_COLS : MF_COLS;
+
+  // ── Upload / parse ────────────────────────────────────────────────────────
+  const handleFile = useCallback((file: File, kind: InstrumentKind) => {
     if (!file.name.endsWith(".csv") && file.type !== "text/csv") {
-      toast.error("Please upload a .csv file");
-      return;
+      toast.error("Please upload a .csv file"); return;
     }
     const reader = new FileReader();
     reader.onload = (e) => {
       const text = e.target?.result as string;
       try {
         const { headers, rows } = parseCsv(text);
-        if (!headers.length || !rows.length) {
-          toast.error("CSV appears empty");
-          return;
-        }
-        // Auto-detect column mapping
-        const mapping: Partial<Record<CsvCol, number>> = {};
-        headers.forEach((h, i) => {
-          const col = detectColumn(h);
-          if (col && !(col in mapping)) mapping[col] = i;
-        });
-        setState((s) => ({ ...s, step: "map", headers, rawRows: rows, mapping }));
-      } catch {
-        toast.error("Failed to parse CSV");
-      }
+        if (!headers.length || !rows.length) { toast.error("CSV appears empty"); return; }
+        const aliases = kind === "stock" ? STOCK_COLS : MF_COLS;
+        const mapping = autoMap(headers, aliases);
+        setState((s) => ({ ...s, step: "map", kind, headers, rawRows: rows, mapping }));
+      } catch { toast.error("Failed to parse CSV"); }
     };
     reader.readAsText(file);
   }, []);
@@ -475,78 +569,90 @@ function ImportCsvModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
-  }, [handleFile]);
+    if (file) handleFile(file, state.kind);
+  }, [handleFile, state.kind]);
 
-  // ── Step 2: column mapping → parse ───────────────────────────────────────
+  // ── Build parsed rows ─────────────────────────────────────────────────────
   function buildParsed(): ParsedRow[] {
-    const { rawRows, mapping } = state;
+    const { rawRows, mapping, kind } = state;
     const get = (row: string[], col: CsvCol) =>
       mapping[col] !== undefined ? (row[mapping[col]!] ?? "").trim() : "";
 
     return rawRows.map((row, i) => {
       const symbol   = get(row, "symbol").toUpperCase().replace(/[^A-Z0-9\-&.]/g, "");
+      const fundName = get(row, "fundName" as CsvCol);
       const rawType  = get(row, "type");
       const rawDate  = get(row, "date");
       const rawQty   = get(row, "quantity");
       const rawPrice = get(row, "price");
-      const rawBrok  = get(row, "brokerage");
+      const rawBrok  = get(row, "brokerage" as CsvCol);
 
-      const type     = normaliseType(rawType || "BUY");
-      const date     = parseDate(rawDate) ?? "";
-      const quantity = parseFloat(rawQty);
-      const price    = parseFloat(rawPrice);
+      const type      = normaliseType(rawType, kind);
+      const date      = parseDate(rawDate) ?? "";
+      const quantity  = parseFloat(rawQty);
+      const price     = parseFloat(rawPrice);
       const brokerage = parseFloat(rawBrok || "0") || 0;
 
-      const errors: string[] = [];
-      if (!symbol)                        errors.push("symbol missing");
-      if (!["BUY","SELL","SIP","LUMPSUM","REDEEM"].includes(type)) errors.push(`unknown type "${rawType}"`);
-      if (!date)                          errors.push("invalid date");
-      else if (new Date(date) > new Date()) errors.push("date in future");
-      if (!isFinite(quantity) || quantity <= 0) errors.push("invalid quantity");
-      if (!isFinite(price)    || price    <= 0) errors.push("invalid price");
-      if (!isFinite(brokerage)|| brokerage < 0) errors.push("invalid brokerage");
+      const errs: string[] = [];
+      const validStockTypes = ["BUY","SELL","SIP","LUMPSUM","REDEEM"];
+      const validMfTypes    = ["SIP","LUMPSUM","REDEEM"];
 
-      return { _line: i + 2, symbol, type, date, quantity, price, brokerage, error: errors.join("; ") || undefined };
+      if (!symbol && !fundName)                            errs.push("symbol/name missing");
+      if (kind === "stock" && !validStockTypes.includes(type)) errs.push(`unknown type "${rawType}"`);
+      if (kind === "mf"    && !validMfTypes.includes(type))    errs.push(`unknown type "${rawType}"`);
+      if (!date)                                           errs.push("invalid date");
+      else if (new Date(date) > new Date())                errs.push("date in future");
+      if (!isFinite(quantity) || quantity <= 0)            errs.push("invalid quantity");
+      if (!isFinite(price)    || price    <= 0)            errs.push("invalid price");
+      if (!isFinite(brokerage)|| brokerage < 0)            errs.push("invalid brokerage");
+
+      return { _line: i + 2, symbol, fundName, type, date, quantity, price, brokerage, error: errs.join("; ") || undefined };
     });
   }
 
   function goToPreview() {
-    const required: CsvCol[] = ["symbol", "quantity", "price"];
+    const required: CsvCol[] = state.kind === "stock"
+      ? ["symbol", "quantity", "price"]
+      : ["quantity", "price"];
     const missing = required.filter((c) => state.mapping[c] === undefined);
     if (missing.length) { toast.error(`Map required columns: ${missing.join(", ")}`); return; }
-    const parsed = buildParsed();
-    setState((s) => ({ ...s, step: "preview", parsed }));
+    setState((s) => ({ ...s, step: "preview", parsed: buildParsed() }));
   }
 
-  // ── Step 3: import ────────────────────────────────────────────────────────
-  const [progress, setProgress] = useState(0);
-
+  // ── Run import ────────────────────────────────────────────────────────────
   async function runImport() {
     setState((s) => ({ ...s, step: "importing" }));
-    const valid = state.parsed.filter((r) => !r.error);
-    const errors: string[] = state.parsed.filter((r) => r.error).map((r) => `Row ${r._line}: ${r.error}`);
-
+    const valid  = state.parsed.filter((r) => !r.error);
+    const errors = state.parsed.filter((r) => r.error).map((r) => `Row ${r._line}: ${r.error}`);
     let ok = 0;
+
     for (let i = 0; i < valid.length; i++) {
       const row = valid[i];
       try {
-        // Resolve symbol → stockId
-        const stocks = await stocksApi.search(row.symbol);
-        const match = stocks.find((s: any) => s.symbol === row.symbol || s.symbol === row.symbol.replace(".NS","").replace(".BO",""));
-        if (!match) { errors.push(`Row ${row._line}: stock "${row.symbol}" not found in database`); continue; }
-
-        await portfolioApi.addTransaction({
-          stockId: match.id,
-          type: row.type,
-          date: new Date(row.date).toISOString(),
-          quantity: row.quantity,
-          price: row.price,
-          brokerage: row.brokerage,
-        });
+        if (state.kind === "stock") {
+          const stocks = await stocksApi.search(row.symbol);
+          const match = stocks.find((s: any) =>
+            s.symbol === row.symbol || s.symbol === row.symbol.replace(".NS","").replace(".BO","")
+          );
+          if (!match) { errors.push(`Row ${row._line}: stock "${row.symbol}" not found in database`); continue; }
+          await portfolioApi.addTransaction({ stockId: match.id, type: row.type, date: new Date(row.date).toISOString(), quantity: row.quantity, price: row.price, brokerage: row.brokerage });
+        } else {
+          // MF: try scheme_code match first, then name search
+          let mfMatch: any = null;
+          if (row.symbol) {
+            const byCode = await mfApi.search(row.symbol);
+            mfMatch = (byCode ?? []).find((m: any) => String(m.scheme_code) === row.symbol);
+          }
+          if (!mfMatch && row.fundName) {
+            const byName = await mfApi.search(row.fundName);
+            mfMatch = (byName ?? [])[0];
+          }
+          if (!mfMatch) { errors.push(`Row ${row._line}: fund "${row.symbol || row.fundName}" not found`); continue; }
+          await portfolioApi.addTransaction({ mfId: mfMatch.id, type: row.type, date: new Date(row.date).toISOString(), quantity: row.quantity, price: row.price, brokerage: 0 });
+        }
         ok++;
       } catch (e: any) {
-        errors.push(`Row ${row._line} (${row.symbol}): ${e?.message ?? "failed"}`);
+        errors.push(`Row ${row._line} (${row.symbol || row.fundName}): ${e?.message ?? "failed"}`);
       }
       setProgress(Math.round(((i + 1) / valid.length) * 100));
     }
@@ -559,10 +665,7 @@ function ImportCsvModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
   const invalidCount = state.parsed.filter((r) =>  r.error).length;
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-    >
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="w-full max-w-2xl bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-slate-200 dark:border-slate-800 flex flex-col max-h-[90vh]">
 
         {/* Header */}
@@ -570,11 +673,11 @@ function ImportCsvModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
           <div>
             <h2 className="text-lg font-semibold">Import portfolio from CSV</h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              {state.step === "upload" && "Upload a CSV file with your transaction history"}
-              {state.step === "map"    && "Confirm which columns map to each field"}
-              {state.step === "preview" && `${validCount} valid rows ready to import${invalidCount ? `, ${invalidCount} will be skipped` : ""}`}
+              {state.step === "upload"    && "Choose instrument type, then upload your CSV"}
+              {state.step === "map"       && "Confirm column mapping"}
+              {state.step === "preview"   && `${validCount} valid rows ready${invalidCount ? `, ${invalidCount} will be skipped` : ""}`}
               {state.step === "importing" && "Importing transactions…"}
-              {state.step === "done" && `Done — ${state.results.ok} imported, ${state.results.failed} skipped`}
+              {state.step === "done"      && `Done — ${state.results.ok} imported, ${state.results.failed} skipped`}
             </p>
           </div>
           <button onClick={onClose} className="p-1 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800">
@@ -588,6 +691,28 @@ function ImportCsvModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
           {/* ── Upload ── */}
           {state.step === "upload" && (
             <div className="space-y-4">
+              {/* Kind selector */}
+              <div>
+                <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">What are you importing?</p>
+                <div className="flex rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden text-sm font-medium">
+                  {(["stock", "mf"] as InstrumentKind[]).map((k) => (
+                    <button
+                      key={k}
+                      onClick={() => setState((s) => ({ ...s, kind: k }))}
+                      className={classNames(
+                        "flex-1 py-2 transition-colors",
+                        state.kind === k
+                          ? "bg-brand-600 text-white"
+                          : "text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+                      )}
+                    >
+                      {k === "stock" ? "Stocks / ETFs" : "Mutual Funds"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Drop zone */}
               <div
                 onDrop={onDrop}
                 onDragOver={(e) => e.preventDefault()}
@@ -596,35 +721,39 @@ function ImportCsvModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
               >
                 <Upload className="w-8 h-8 mx-auto text-slate-400 mb-3" />
                 <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Drop your CSV here or click to browse</p>
-                <p className="text-xs text-slate-400 mt-1">Supports any CSV with columns for symbol, type, date, quantity, price</p>
-                <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
+                <p className="text-xs text-slate-400 mt-1">
+                  {state.kind === "stock" ? "Columns: Symbol, Type, Date, Quantity, Price, Brokerage" : "Columns: Scheme Code, Fund Name, Type, Date, Units, NAV"}
+                </p>
+                <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f, state.kind); e.target.value = ""; }} />
               </div>
 
+              {/* Example format */}
               <div className="rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 p-4">
-                <p className="text-xs font-semibold text-slate-600 dark:text-slate-300 mb-2">Expected CSV format</p>
+                <p className="text-xs font-semibold text-slate-600 dark:text-slate-300 mb-2">
+                  {state.kind === "stock" ? "Stock CSV example" : "Mutual Fund CSV example"}
+                </p>
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs font-mono text-slate-600 dark:text-slate-400">
                     <thead>
-                      <tr className="text-slate-500">
-                        {["Symbol","Type","Date","Quantity","Price","Brokerage"].map((h) => (
-                          <th key={h} className="text-left px-2 py-1 bg-slate-100 dark:bg-slate-800">{h}</th>
-                        ))}
+                      <tr>
+                        {(state.kind === "stock"
+                          ? ["Symbol","Type","Date","Quantity","Price","Brokerage"]
+                          : ["Scheme Code","Fund Name","Type","Date","Units","NAV"]
+                        ).map((h) => <th key={h} className="text-left px-2 py-1 bg-slate-100 dark:bg-slate-800">{h}</th>)}
                       </tr>
                     </thead>
                     <tbody>
-                      {[
-                        ["RELIANCE","BUY","2024-01-15","10","2450.50","20"],
-                        ["TCS","BUY","2024-02-01","5","3800.00","15"],
-                        ["INFY","SELL","2024-03-10","3","1750.00","12"],
-                      ].map((row, i) => (
-                        <tr key={i}>
-                          {row.map((cell, j) => <td key={j} className="px-2 py-1">{cell}</td>)}
-                        </tr>
+                      {(state.kind === "stock" ? STOCK_EXAMPLE_ROWS : MF_EXAMPLE_ROWS).map((row, i) => (
+                        <tr key={i}>{row.map((cell, j) => <td key={j} className="px-2 py-1">{cell}</td>)}</tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-                <p className="text-xs text-slate-400 mt-2">Dates: YYYY-MM-DD or DD/MM/YYYY. Type: BUY, SELL, SIP, LUMPSUM, REDEEM. Brokerage is optional.</p>
+                {state.kind === "stock"
+                  ? <p className="text-xs text-slate-400 mt-2">Dates: YYYY-MM-DD or DD/MM/YYYY. Type: BUY, SELL. Brokerage is optional.</p>
+                  : <p className="text-xs text-slate-400 mt-2">Type: SIP, LUMPSUM, REDEEM. Either Scheme Code or Fund Name is required (both recommended).</p>
+                }
               </div>
             </div>
           )}
@@ -632,27 +761,42 @@ function ImportCsvModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
           {/* ── Column mapping ── */}
           {state.step === "map" && (
             <div className="space-y-3">
-              <p className="text-xs text-slate-500">Detected {state.headers.length} columns, {state.rawRows.length} data rows. Confirm the mapping below.</p>
+              <div className="flex items-center gap-2">
+                <span className={classNames(
+                  "text-xs px-2 py-0.5 rounded-full font-medium",
+                  state.kind === "mf"
+                    ? "bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                    : "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                )}>
+                  {state.kind === "mf" ? "Mutual Fund" : "Stock"}
+                </span>
+                <p className="text-xs text-slate-500">{state.headers.length} columns · {state.rawRows.length} rows detected</p>
+              </div>
               <div className="grid grid-cols-2 gap-3">
-                {(Object.keys(COL_ALIASES) as CsvCol[]).map((col) => (
-                  <div key={col}>
-                    <label className="text-sm font-medium text-slate-700 dark:text-slate-300 capitalize">
-                      {col}
-                      {["symbol","quantity","price"].includes(col) && <span className="text-red-500 ml-1">*</span>}
-                    </label>
-                    <select
-                      className="mt-1 w-full h-9 px-3 rounded-md text-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-brand-500"
-                      value={state.mapping[col] ?? ""}
-                      onChange={(e) => setState((s) => ({
-                        ...s,
-                        mapping: { ...s.mapping, [col]: e.target.value === "" ? undefined : Number(e.target.value) }
-                      }))}
-                    >
-                      <option value="">— not mapped —</option>
-                      {state.headers.map((h, i) => <option key={i} value={i}>{h}</option>)}
-                    </select>
-                  </div>
-                ))}
+                {(Object.keys(activeAliases) as CsvCol[]).map((col) => {
+                  const isRequired = state.kind === "stock"
+                    ? ["symbol","quantity","price"].includes(col)
+                    : ["quantity","price"].includes(col);
+                  return (
+                    <div key={col}>
+                      <label className="text-sm font-medium text-slate-700 dark:text-slate-300 capitalize">
+                        {col === "fundName" ? "Fund name" : col}
+                        {isRequired && <span className="text-red-500 ml-1">*</span>}
+                      </label>
+                      <select
+                        className="mt-1 w-full h-9 px-3 rounded-md text-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-brand-500"
+                        value={state.mapping[col] ?? ""}
+                        onChange={(e) => setState((s) => ({
+                          ...s,
+                          mapping: { ...s.mapping, [col]: e.target.value === "" ? undefined : Number(e.target.value) }
+                        }))}
+                      >
+                        <option value="">— not mapped —</option>
+                        {state.headers.map((h, i) => <option key={i} value={i}>{h}</option>)}
+                      </select>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -665,12 +809,12 @@ function ImportCsvModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
                   <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 uppercase tracking-wide">
                     <tr>
                       <th className="text-left px-3 py-2">Row</th>
-                      <th className="text-left px-3 py-2">Symbol</th>
+                      <th className="text-left px-3 py-2">{state.kind === "mf" ? "Code / Name" : "Symbol"}</th>
                       <th className="text-left px-3 py-2">Type</th>
                       <th className="text-left px-3 py-2">Date</th>
-                      <th className="text-right px-3 py-2">Qty</th>
-                      <th className="text-right px-3 py-2">Price</th>
-                      <th className="text-right px-3 py-2">Brok.</th>
+                      <th className="text-right px-3 py-2">{state.kind === "mf" ? "Units" : "Qty"}</th>
+                      <th className="text-right px-3 py-2">{state.kind === "mf" ? "NAV" : "Price"}</th>
+                      {state.kind === "stock" && <th className="text-right px-3 py-2">Brok.</th>}
                       <th className="text-left px-3 py-2">Status</th>
                     </tr>
                   </thead>
@@ -681,31 +825,27 @@ function ImportCsvModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
                         r.error ? "bg-red-50/50 dark:bg-red-900/10" : ""
                       )}>
                         <td className="px-3 py-1.5 text-slate-400">{r._line}</td>
-                        <td className="px-3 py-1.5 font-medium font-mono">{r.symbol || "—"}</td>
+                        <td className="px-3 py-1.5 font-mono">
+                          <div className="font-medium">{r.symbol || "—"}</div>
+                          {state.kind === "mf" && r.fundName && <div className="text-slate-500 text-[10px] truncate max-w-[140px]">{r.fundName}</div>}
+                        </td>
                         <td className="px-3 py-1.5">{r.type}</td>
                         <td className="px-3 py-1.5">{r.date || "—"}</td>
                         <td className="px-3 py-1.5 text-right font-mono">{isFinite(r.quantity) ? r.quantity : "—"}</td>
                         <td className="px-3 py-1.5 text-right font-mono">{isFinite(r.price) ? r.price.toFixed(2) : "—"}</td>
-                        <td className="px-3 py-1.5 text-right font-mono">{r.brokerage.toFixed(2)}</td>
+                        {state.kind === "stock" && <td className="px-3 py-1.5 text-right font-mono">{r.brokerage.toFixed(2)}</td>}
                         <td className="px-3 py-1.5">
                           {r.error
                             ? <span className="flex items-center gap-1 text-red-600 dark:text-red-400"><AlertCircle className="w-3 h-3 shrink-0" />{r.error}</span>
-                            : <span className="flex items-center gap-1 text-green-600 dark:text-green-400"><CheckCircle2 className="w-3 h-3" />OK</span>
-                          }
+                            : <span className="flex items-center gap-1 text-green-600 dark:text-green-400"><CheckCircle2 className="w-3 h-3" />OK</span>}
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-              {invalidCount > 0 && (
-                <p className="text-xs text-amber-600 dark:text-amber-400">
-                  {invalidCount} row{invalidCount !== 1 ? "s" : ""} have errors and will be skipped. Fix the CSV and re-upload to include them.
-                </p>
-              )}
-              {validCount === 0 && (
-                <p className="text-xs text-red-600 dark:text-red-400 font-medium">No valid rows to import. Please fix the errors above.</p>
-              )}
+              {invalidCount > 0 && <p className="text-xs text-amber-600 dark:text-amber-400">{invalidCount} row{invalidCount !== 1 ? "s" : ""} have errors and will be skipped.</p>}
+              {validCount === 0   && <p className="text-xs text-red-600 dark:text-red-400 font-medium">No valid rows. Please fix the errors and re-upload.</p>}
             </div>
           )}
 
@@ -738,9 +878,7 @@ function ImportCsvModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
               {state.results.errors.length > 0 && (
                 <div className="rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 p-3 max-h-48 overflow-y-auto">
                   <p className="text-xs font-semibold text-slate-600 dark:text-slate-300 mb-2">Skipped rows</p>
-                  {state.results.errors.map((e, i) => (
-                    <p key={i} className="text-xs text-red-600 dark:text-red-400 font-mono">{e}</p>
-                  ))}
+                  {state.results.errors.map((e, i) => <p key={i} className="text-xs text-red-600 dark:text-red-400 font-mono">{e}</p>)}
                 </div>
               )}
             </div>
