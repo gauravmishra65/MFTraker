@@ -6,7 +6,15 @@ const MAX_QUOTE_SYMBOLS = 20;
 
 // Helper to call Supabase edge functions with auth
 async function edgeFetch<T>(path: string, opts: RequestInit = {}): Promise<T> {
-  const token = useAuthStore.getState().token;
+  // Prefer fresh session token over persisted one to avoid using expired tokens
+  let token: string | null = useAuthStore.getState().token;
+  try {
+    const result = await supabase.auth.getSession();
+    if (result.data.session?.access_token) {
+      token = result.data.session.access_token;
+    }
+  } catch { /* fall back to stored token */ }
+
   const res = await fetch(`${SUPABASE_URL}/functions/v1${path}`, {
     ...opts,
     headers: {
@@ -17,10 +25,10 @@ async function edgeFetch<T>(path: string, opts: RequestInit = {}): Promise<T> {
     }
   });
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.message ?? `HTTP ${res.status}`);
+    const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+    throw new Error((body.error as string) ?? (body.message as string) ?? `HTTP ${res.status}`);
   }
-  return res.json();
+  return res.json() as Promise<T>;
 }
 
 // Fetch quotes in batches of MAX_QUOTE_SYMBOLS, all batches run in parallel
@@ -436,13 +444,32 @@ export const alertsApi = {
 
 // ---------- USER ----------
 
+function dbUserToMe(row: Record<string, any>) {
+  return {
+    id: row.id,
+    fullName: row.full_name ?? "",
+    email: row.email ?? "",
+    phone: row.phone ?? null,
+    dob: row.dob ? new Date(row.dob).toISOString().slice(0, 10) : null,
+    pan: row.pan ?? null,
+    city: row.city ?? null,
+    state: row.state ?? null,
+    investmentExperience: row.investment_experience ?? null,
+    riskTolerance: row.risk_tolerance ?? null,
+    annualIncomeRange: row.annual_income_range ?? null,
+    investmentGoals: row.investment_goals ?? [],
+    createdAt: row.created_at ?? null,
+  };
+}
+
 export const userApi = {
   async getMe() {
     const authUser = useAuthStore.getState().user;
     if (!authUser) throw new Error("Not authenticated");
     const { data, error } = await supabase.from("users").select("*").eq("id", authUser.id).maybeSingle();
     if (error) throw error;
-    return data;
+    if (!data) return null;
+    return dbUserToMe(data);
   },
 
   async updateMe(updates: Record<string, any>) {
@@ -456,7 +483,7 @@ export const userApi = {
     const { data, error } = await supabase.from("users").update(snakeUpdates).eq("id", authUser.id).select().maybeSingle();
     if (error) throw error;
     if (updates.fullName) await supabase.auth.updateUser({ data: { full_name: updates.fullName } });
-    return data;
+    return data ? dbUserToMe(data) : null;
   }
 };
 
@@ -502,7 +529,7 @@ export const marketApi = {
 // Components still import `api` — this adapter maps old REST calls to Supabase
 
 export const api = {
-  get: async (path: string) => {
+  get: async (path: string): Promise<{ data: any }> => {
     if (path.startsWith("/stocks/search")) {
       const q = new URLSearchParams(path.split("?")[1]).get("q") ?? "";
       return { data: { results: await stocksApi.search(q) } };
@@ -588,7 +615,7 @@ export const api = {
     }
     return { data: {} };
   },
-  post: async (path: string, body?: any) => {
+  post: async (path: string, body?: any): Promise<{ data: any }> => {
     if (path === "/alerts") return { data: await alertsApi.create(body) };
     if (path === "/portfolio/transactions") return { data: await portfolioApi.addTransaction(body) };
     if (path === "/watchlists") return { data: await watchlistsApi.create(body.name) };
@@ -609,11 +636,11 @@ export const api = {
     }
     return { data: {} };
   },
-  put: async (path: string, body?: any) => {
+  put: async (path: string, body?: any): Promise<{ data: any }> => {
     if (path === "/user/me") return { data: await userApi.updateMe(body) };
     return { data: {} };
   },
-  delete: async (path: string) => {
+  delete: async (path: string): Promise<{ data: any }> => {
     if (path.startsWith("/alerts/")) { await alertsApi.delete(path.split("/").pop() ?? ""); return { data: { ok: true } }; }
     if (path.startsWith("/watchlists/items/")) { await watchlistsApi.removeItem(path.split("/").pop() ?? ""); return { data: { ok: true } }; }
     if (path.startsWith("/portfolio/transactions/")) { await portfolioApi.deleteTransaction(path.split("/").pop() ?? ""); return { data: { ok: true } }; }
