@@ -493,16 +493,24 @@ export const api = {
       return { data: await alertsApi.getAll() };
     }
     if (path.startsWith("/stocks/quote/")) {
-      const sym = path.split("/").pop() ?? "";
-      const { data: local } = await supabase.from("stocks").select("*").or(`symbol.eq.${sym},yahoo_symbol.eq.${sym}`).maybeSingle();
-      const quote = await marketApi.getQuote(sym.includes(".") ? sym : `${sym}.NS`);
+      const sym = decodeURIComponent(path.split("/").pop() ?? "");
+      const safeSym = sanitizeSearch(sym);
+      const { data: local } = await supabase
+        .from("stocks")
+        .select("*")
+        .or(`symbol.eq.${safeSym},yahoo_symbol.eq.${safeSym}`)
+        .maybeSingle();
+      const yahooSym = local?.yahoo_symbol ?? (sym.includes(".") ? sym : `${sym}.NS`);
+      const quote = await marketApi.getQuote(yahooSym);
       return { data: { stock: local, quote } };
     }
     if (path.startsWith("/stocks/history/")) {
       const parts = path.split("/");
-      const sym = parts[parts.indexOf("history") + 1];
+      const sym = decodeURIComponent(parts[parts.indexOf("history") + 1]);
       const params = new URLSearchParams(path.split("?")[1] ?? "");
-      const candles = await marketApi.getHistory(sym.includes(".") ? sym : `${sym}.NS`, params.get("range") ?? "1mo", params.get("interval") ?? "1d");
+      const { data: localStock } = await supabase.from("stocks").select("yahoo_symbol").or(`symbol.eq.${sanitizeSearch(sym)},yahoo_symbol.eq.${sanitizeSearch(sym)}`).maybeSingle();
+      const yahooSym = localStock?.yahoo_symbol ?? (sym.includes(".") ? sym : `${sym}.NS`);
+      const candles = await marketApi.getHistory(yahooSym, params.get("range") ?? "1mo", params.get("interval") ?? "1d");
       return { data: { symbol: sym, candles } };
     }
     if (path.startsWith("/mf/search")) {
