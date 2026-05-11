@@ -489,6 +489,12 @@ export const marketApi = {
   async getHistory(symbol: string, range: string, interval: string) {
     const data = await edgeFetch<{ candles: any[] }>(`/market-data?history=${encodeURIComponent(symbol)}&range=${range}&interval=${interval}`);
     return data.candles ?? [];
+  },
+
+  async getMFDetail(id: string) {
+    try {
+      return await edgeFetch<{ fund: any; returns: Record<string, number | null>; navChart: { date: string; nav: number }[] }>(`/mf-detail?id=${encodeURIComponent(id)}`);
+    } catch { return null; }
   }
 };
 
@@ -551,22 +557,12 @@ export const api = {
     }
     if (path.match(/^\/mf\/[^/]+$/) && !path.includes("search") && !path.includes("calc") && !path.includes("compare") && !path.includes("categories")) {
       const id = path.split("/").pop() ?? "";
-      const fund = await mfApi.getById(id);
-      const fakeHoldings = [
-        { name: "HDFC Bank", weight: 8.4 }, { name: "Reliance Industries", weight: 7.1 },
-        { name: "ICICI Bank", weight: 6.8 }, { name: "Infosys", weight: 5.9 },
-        { name: "TCS", weight: 5.2 }, { name: "Larsen & Toubro", weight: 3.8 },
-        { name: "Bharti Airtel", weight: 3.5 }, { name: "Axis Bank", weight: 3.2 },
-        { name: "ITC", weight: 3.0 }, { name: "Kotak Mahindra Bank", weight: 2.8 }
-      ];
-      const fakeReturns = { "1M": 1.4, "3M": 4.2, "6M": 9.1, "1Y": 18.6, "3Y": 14.8, "5Y": 12.4, SI: 13.7 };
-      const sectors = [
-        { sector: "Financials", weight: 32 }, { sector: "IT", weight: 18 },
-        { sector: "Energy", weight: 12 }, { sector: "FMCG", weight: 9 },
-        { sector: "Auto", weight: 7 }, { sector: "Pharma", weight: 6 },
-        { sector: "Other", weight: 16 }
-      ];
-      return { data: { fund, holdings: fakeHoldings, returns: fakeReturns, sectors } };
+      const detail = await marketApi.getMFDetail(id);
+      // Fall back to DB-only fund data if edge function is unavailable
+      const fund = detail?.fund ?? await mfApi.getById(id);
+      const returns = detail?.returns ?? {};
+      const navChart = detail?.navChart ?? [];
+      return { data: { fund, returns, navChart, holdings: [], sectors: [] } };
     }
     if (path.startsWith("/stocks/screener")) {
       const params = new URLSearchParams(path.split("?")[1]);

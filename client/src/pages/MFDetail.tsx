@@ -1,6 +1,9 @@
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import {
+  Bar, BarChart, CartesianGrid, Line, LineChart,
+  ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from "recharts";
 
 import { api } from "@/lib/api";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
@@ -8,8 +11,6 @@ import { useState } from "react";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { formatINR } from "@/lib/format";
-
-const COLORS = ["#2f8df8", "#16a34a", "#f59e0b", "#dc2626", "#9333ea", "#0ea5e9", "#65a30d"];
 
 interface FundData {
   id: string;
@@ -29,14 +30,9 @@ interface FundData {
   scheme_code: string | null;
 }
 
-interface HoldingData {
-  name: string;
-  weight: number;
-}
-
-interface SectorData {
-  sector: string;
-  weight: number;
+interface NavPoint {
+  date: string;
+  nav: number;
 }
 
 interface SipResult {
@@ -52,18 +48,23 @@ export default function MFDetail() {
     queryKey: ["mf", id],
     queryFn: async () => (await api.get(`/mf/${id}`)).data as {
       fund: FundData;
-      returns: Record<string, number>;
-      sectors: SectorData[];
-      holdings: HoldingData[];
+      returns: Record<string, number | null>;
+      navChart: NavPoint[];
+      holdings: never[];
+      sectors: never[];
     }
   });
 
   const f = detail.data?.fund;
   const returns = detail.data?.returns ?? {};
-  const sectors = detail.data?.sectors ?? [];
-  const holdings = detail.data?.holdings ?? [];
+  const navChart = detail.data?.navChart ?? [];
 
-  const returnRows = ["1M", "3M", "6M", "1Y", "3Y", "5Y", "SI"].map((p) => ({ period: p, value: returns[p] ?? 0 }));
+  const returnRows = ["1M", "3M", "6M", "1Y", "3Y", "5Y", "SI"]
+    .map((p) => ({ period: p, value: returns[p] ?? null }))
+    .filter((r) => r.value != null) as { period: string; value: number }[];
+
+  const hasReturns = returnRows.length > 0;
+  const hasNavChart = navChart.length > 1;
 
   return (
     <div className="space-y-6">
@@ -75,7 +76,9 @@ export default function MFDetail() {
 
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">{f?.name ?? "Loading..."}</h1>
-        <p className="text-sm text-slate-500 mt-1">{f?.amc} · {f?.category}{f?.sub_category ? ` · ${f.sub_category}` : ""}</p>
+        <p className="text-sm text-slate-500 mt-1">
+          {f?.amc} · {f?.category}{f?.sub_category ? ` · ${f.sub_category}` : ""}
+        </p>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
@@ -85,28 +88,50 @@ export default function MFDetail() {
         <Stat label="Min SIP" value={f?.min_sip ? formatINR(f.min_sip) : "—"} />
         <Stat label="Risk level" value={f?.risk_level ?? "—"} />
       </div>
+
       {f?.benchmark && (
-        <p className="text-xs text-slate-400">Benchmark: {f.benchmark}{f.fund_manager ? ` · Fund manager: ${f.fund_manager}` : ""}</p>
+        <p className="text-xs text-slate-400">
+          Benchmark: {f.benchmark}{f.fund_manager ? ` · Fund manager: ${f.fund_manager}` : ""}
+          {f.inception_date ? ` · Inception: ${new Date(f.inception_date).toLocaleDateString("en-IN", { year: "numeric", month: "short" })}` : ""}
+        </p>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Returns bar chart — real data from MFAPI */}
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle>Returns</CardTitle>
-            <span className="text-[10px] text-slate-400 ml-2">Sample data</span>
+            <span className="text-[10px] text-slate-400 ml-2">
+              {hasReturns ? "Source: MFAPI.in (live NAV)" : "Not available"}
+            </span>
           </CardHeader>
           <CardBody>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={returnRows}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,.25)" />
-                  <XAxis dataKey="period" stroke="rgba(100,116,139,.7)" fontSize={11} />
-                  <YAxis stroke="rgba(100,116,139,.7)" fontSize={11} />
-                  <Tooltip formatter={(v: number) => `${v.toFixed(2)}%`} contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", color: "#e2e8f0", fontSize: 12 }} />
-                  <Bar dataKey="value" fill="#2f8df8" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            {detail.isLoading ? (
+              <div className="h-64 flex items-center justify-center text-sm text-slate-400 animate-pulse">Loading...</div>
+            ) : hasReturns ? (
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={returnRows}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,.25)" />
+                    <XAxis dataKey="period" stroke="rgba(100,116,139,.7)" fontSize={11} />
+                    <YAxis stroke="rgba(100,116,139,.7)" fontSize={11} tickFormatter={(v) => `${v.toFixed(0)}%`} />
+                    <Tooltip
+                      formatter={(v: number) => [`${v.toFixed(2)}%`, "Return"]}
+                      contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", color: "#e2e8f0", fontSize: 12 }}
+                    />
+                    <Bar
+                      dataKey="value"
+                      radius={[4, 4, 0, 0]}
+                      fill="#2f8df8"
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="h-64 flex items-center justify-center text-sm text-slate-400">
+                Returns data unavailable. Ensure this fund has a valid scheme code and is seeded.
+              </div>
+            )}
           </CardBody>
         </Card>
 
@@ -116,44 +141,72 @@ export default function MFDetail() {
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* NAV history chart */}
+      {(hasNavChart || detail.isLoading) && (
         <Card>
           <CardHeader>
-            <CardTitle>Sector allocation</CardTitle>
-            <span className="text-[10px] text-slate-400 ml-2">Sample data</span>
+            <CardTitle>NAV history (1 year)</CardTitle>
+            <span className="text-[10px] text-slate-400 ml-2">Source: MFAPI.in</span>
           </CardHeader>
           <CardBody>
-            <div className="h-72">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={sectors} dataKey="weight" nameKey="sector" innerRadius={45} outerRadius={90} paddingAngle={2}>
-                    {sectors.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                  </Pie>
-                  <Tooltip formatter={(v: number) => `${v}%`} />
-                  <Legend wrapperStyle={{ fontSize: 12 }} />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
+            {detail.isLoading ? (
+              <div className="h-48 flex items-center justify-center text-sm text-slate-400 animate-pulse">Loading...</div>
+            ) : (
+              <div className="h-48">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={navChart}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,.15)" />
+                    <XAxis
+                      dataKey="date"
+                      stroke="rgba(100,116,139,.7)"
+                      fontSize={10}
+                      tickFormatter={(d) => {
+                        const dt = new Date(d);
+                        return `${dt.toLocaleString("en-IN", { month: "short" })} '${String(dt.getFullYear()).slice(2)}`;
+                      }}
+                      interval="preserveStartEnd"
+                    />
+                    <YAxis
+                      stroke="rgba(100,116,139,.7)"
+                      fontSize={10}
+                      domain={["auto", "auto"]}
+                      tickFormatter={(v) => `₹${v.toFixed(0)}`}
+                      width={55}
+                    />
+                    <Tooltip
+                      formatter={(v: number) => [formatINR(v), "NAV"]}
+                      labelFormatter={(d) => new Date(d).toLocaleDateString("en-IN")}
+                      contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", color: "#e2e8f0", fontSize: 12 }}
+                    />
+                    <Line type="monotone" dataKey="nav" stroke="#2f8df8" dot={false} strokeWidth={2} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </CardBody>
         </Card>
+      )}
 
+      {/* Additional fund info */}
+      {(f?.min_lumpsum || f?.scheme_code) && (
         <Card>
-          <CardHeader>
-            <CardTitle>Top 10 holdings</CardTitle>
-            <span className="text-[10px] text-slate-400 ml-2">Sample data</span>
-          </CardHeader>
-          <CardBody>
-            <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-              {holdings.map((h) => (
-                <li key={h.name} className="py-2 flex items-center justify-between text-sm">
-                  <span>{h.name}</span>
-                  <span className="font-mono text-slate-500">{h.weight.toFixed(1)}%</span>
-                </li>
-              ))}
-            </ul>
+          <CardHeader><CardTitle>Fund details</CardTitle></CardHeader>
+          <CardBody className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+            {f?.min_lumpsum && (
+              <div>
+                <div className="text-xs text-slate-500">Min lumpsum</div>
+                <div className="font-mono mt-1">{formatINR(f.min_lumpsum)}</div>
+              </div>
+            )}
+            {f?.scheme_code && (
+              <div>
+                <div className="text-xs text-slate-500">Scheme code</div>
+                <div className="font-mono mt-1">{f.scheme_code}</div>
+              </div>
+            )}
           </CardBody>
         </Card>
-      </div>
+      )}
     </div>
   );
 }
@@ -163,7 +216,9 @@ function Stat({ label, value, highlight }: { label: string; value: string; highl
     <Card>
       <CardBody className="pt-5">
         <div className="text-xs text-slate-500">{label}</div>
-        <div className={`mt-2 font-semibold text-xl tracking-tight ${highlight ? "text-brand-600 dark:text-brand-400" : ""}`}>{value}</div>
+        <div className={`mt-2 font-semibold text-xl tracking-tight ${highlight ? "text-brand-600 dark:text-brand-400" : ""}`}>
+          {value}
+        </div>
       </CardBody>
     </Card>
   );

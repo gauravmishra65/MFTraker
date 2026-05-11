@@ -108,7 +108,7 @@ export default function Register() {
       const payload = {
         ...parsed.data,
         phone: parsed.data.phone || undefined,
-        dob: parsed.data.dob ? new Date(parsed.data.dob) : null,
+        dob: parsed.data.dob || null,
         pan: parsed.data.pan || null,
         city: parsed.data.city || null,
         state: parsed.data.state || null,
