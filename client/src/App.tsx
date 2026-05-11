@@ -27,16 +27,16 @@ export default function App() {
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/stocks/add" element={<StockSearch />} />
           <Route path="/stocks/:symbol" element={<StockDetail />} />
-          <Route path="/mf/:id" element={<MFDetail />} />
           <Route path="/mf/compare" element={<MFCompare />} />
+          <Route path="/mf/:id" element={<MFDetail />} />
           <Route path="/portfolio" element={<Portfolio />} />
           <Route path="/watchlist" element={<Watchlist />} />
           <Route path="/screener" element={<Screener />} />
           <Route path="/alerts" element={<Alerts />} />
           <Route path="/learn" element={<Education />} />
           <Route path="/profile" element={<Profile />} />
-          <Route path="/stocks/add" element={<StockSearch />} />
         </Route>
       </Route>
 

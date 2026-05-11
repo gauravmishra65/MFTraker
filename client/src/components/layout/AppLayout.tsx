@@ -2,20 +2,21 @@ import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuthStore } from "@/store/auth";
 import { useThemeStore } from "@/store/theme";
-import { ChartLine as LineChart, LayoutDashboard, Briefcase, Star, ListFilter as Filter, User as User2, Sun, Moon, LogOut, Bell, BookOpen, Menu, X, CirclePlus as PlusCircle } from "lucide-react";
+import { ChartLine as LineChart, LayoutDashboard, Briefcase, Star, ListFilter as Filter, User as User2, Sun, Moon, LogOut, Bell, BookOpen, Menu, X, CirclePlus as PlusCircle, TrendingUp } from "lucide-react";
 import GlobalSearch from "@/components/stocks/GlobalSearch";
 import IndicesBanner from "@/components/dashboard/IndicesBanner";
 import { classNames } from "@/lib/format";
 
 const navItems = [
-  { to: "/",            label: "Dashboard",  icon: LayoutDashboard },
-  { to: "/portfolio",   label: "Portfolio",  icon: Briefcase },
-  { to: "/watchlist",   label: "Watchlist",  icon: Star },
-  { to: "/screener",    label: "Screener",   icon: Filter },
-  { to: "/stocks/add",  label: "Add Stocks", icon: PlusCircle },
-  { to: "/alerts",      label: "Alerts",     icon: Bell },
-  { to: "/learn",       label: "Learn",      icon: BookOpen },
-  { to: "/profile",     label: "Profile",    icon: User2 },
+  { to: "/",            label: "Dashboard",    icon: LayoutDashboard },
+  { to: "/portfolio",   label: "Portfolio",    icon: Briefcase },
+  { to: "/watchlist",   label: "Watchlist",    icon: Star },
+  { to: "/screener",    label: "Screener",     icon: Filter },
+  { to: "/mf/compare",  label: "Mutual Funds", icon: TrendingUp },
+  { to: "/stocks/add",  label: "Add Stocks",   icon: PlusCircle },
+  { to: "/alerts",      label: "Alerts",       icon: Bell },
+  { to: "/learn",       label: "Learn",        icon: BookOpen },
+  { to: "/profile",     label: "Profile",      icon: User2 },
 ];
 
 export default function AppLayout() {
