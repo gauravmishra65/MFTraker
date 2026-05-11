@@ -15,6 +15,7 @@ import ProtectedRoute from "@/components/layout/ProtectedRoute";
 import MFCompare from "@/pages/MFCompare";
 import Alerts from "@/pages/Alerts";
 import Education from "@/pages/Education";
+import StockSearch from "@/pages/StockSearch";
 
 export default function App() {
   return (
@@ -35,6 +36,7 @@ export default function App() {
           <Route path="/alerts" element={<Alerts />} />
           <Route path="/learn" element={<Education />} />
           <Route path="/profile" element={<Profile />} />
+          <Route path="/stocks/add" element={<StockSearch />} />
         </Route>
       </Route>
 

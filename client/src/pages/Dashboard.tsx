@@ -1,12 +1,10 @@
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { api, marketApi } from "@/lib/api";
 import { changeColor, classNames, formatINR, formatPct } from "@/lib/format";
-import { ArrowDownRight, ArrowUpRight, Briefcase, TrendingDown, TrendingUp, Database, RefreshCw } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Briefcase, TrendingDown, TrendingUp, CirclePlus as PlusCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAuthStore } from "@/store/auth";
-import toast from "react-hot-toast";
 
 
 interface PortfolioSummary {
@@ -38,30 +36,6 @@ interface TransactionData {
 
 export default function Dashboard() {
   const user = useAuthStore((s) => s.user);
-  const [seeding, setSeeding] = useState(false);
-  const [seedResult, setSeedResult] = useState<string | null>(null);
-
-  async function runSeed(mode: "stocks" | "mf" | "all") {
-    setSeeding(true);
-    setSeedResult(null);
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? "";
-    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? "";
-    try {
-      const res = await fetch(
-        `${supabaseUrl}/functions/v1/seed-data?mode=${mode}`,
-        { method: "POST", headers: { Authorization: `Bearer ${anonKey}`, apikey: anonKey } }
-      );
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Seed failed");
-      setSeedResult(`Done — stocks: ${json.totals?.stocks ?? "?"}, mutual funds: ${json.totals?.mutual_funds ?? "?"}`);
-      toast.success("Data seeded successfully");
-    } catch (e: any) {
-      toast.error(e.message ?? "Seed failed");
-    } finally {
-      setSeeding(false);
-    }
-  }
-
   const indices = useQuery({
     queryKey: ["indices"],
     queryFn: () => marketApi.getIndices(),
@@ -140,45 +114,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Seed data admin panel */}
-      <details className="group">
-        <summary className="cursor-pointer flex items-center gap-2 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 select-none w-fit">
-          <Database className="w-3.5 h-3.5" />
-          Data management
-        </summary>
-        <div className="mt-3 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-200 dark:border-slate-700 space-y-3">
-          <p className="text-xs text-slate-500">Populate the database with NSE/BSE stocks and mutual funds from live sources.</p>
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => runSeed("stocks")}
-              disabled={seeding}
-              className="flex items-center gap-1.5 px-3 h-8 rounded-md text-xs font-medium bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
-            >
-              {seeding ? <RefreshCw className="w-3 h-3 animate-spin" /> : null}
-              Seed NSE/BSE stocks ({">"}200)
-            </button>
-            <button
-              onClick={() => runSeed("mf")}
-              disabled={seeding}
-              className="flex items-center gap-1.5 px-3 h-8 rounded-md text-xs font-medium bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
-            >
-              {seeding ? <RefreshCw className="w-3 h-3 animate-spin" /> : null}
-              Seed all mutual funds (AMFI)
-            </button>
-            <button
-              onClick={() => runSeed("all")}
-              disabled={seeding}
-              className="flex items-center gap-1.5 px-3 h-8 rounded-md text-xs font-medium bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50"
-            >
-              {seeding ? <RefreshCw className="w-3 h-3 animate-spin" /> : null}
-              Seed everything
-            </button>
-          </div>
-          {seeding && <p className="text-xs text-slate-400 animate-pulse">Fetching data — this may take 30–60 seconds for mutual funds…</p>}
-          {seedResult && <p className="text-xs text-green-600 dark:text-green-400">{seedResult}</p>}
-        </div>
-      </details>
-
       {portfolio.isError && (
         <div className="text-sm text-red-600 bg-red-50 dark:bg-red-900/20 dark:text-red-400 rounded-md px-4 py-3">
           Failed to load portfolio data. Please refresh the page.
@@ -219,7 +154,12 @@ export default function Dashboard() {
           </CardHeader>
           <CardBody>
             {(watchlists.data?.[0]?.items ?? []).length === 0 ? (
-              <div className="text-sm text-slate-500">No items yet — add stocks from the search bar.</div>
+              <div className="flex items-center gap-2 text-sm text-slate-500">
+                <span>No items yet.</span>
+                <Link to="/stocks/add" className="flex items-center gap-1 text-brand-600 hover:underline font-medium">
+                  <PlusCircle className="w-3.5 h-3.5" /> Add stocks
+                </Link>
+              </div>
             ) : (
               <ul className="divide-y divide-slate-100 dark:divide-slate-800">
                 {(watchlists.data?.[0]?.items ?? []).slice(0, 6).map((it) => (

@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -15,19 +16,9 @@ const NSE_INDICES: { yahoo: string; display: string }[] = [
   { yahoo: "^NSMIDCP",display: "NIFTY MIDCAP"},
 ];
 
-// Broad Nifty 500-ish universe for movers (50 symbols)
-const MOVERS_SYMBOLS = [
-  "RELIANCE.NS","TCS.NS","HDFCBANK.NS","INFY.NS","ICICIBANK.NS",
-  "HINDUNILVR.NS","SBIN.NS","BHARTIARTL.NS","KOTAKBANK.NS","ITC.NS",
-  "LT.NS","AXISBANK.NS","ASIANPAINT.NS","MARUTI.NS","TITAN.NS",
-  "WIPRO.NS","HCLTECH.NS","BAJFINANCE.NS","SUNPHARMA.NS","ULTRACEMCO.NS",
-  "TATAMOTORS.NS","ADANIENT.NS","ONGC.NS","NTPC.NS","POWERGRID.NS",
-  "NESTLEIND.NS","BAJAJFINSV.NS","TATASTEEL.NS","JSWSTEEL.NS","HINDALCO.NS",
-  "TECHM.NS","DRREDDY.NS","CIPLA.NS","DIVISLAB.NS","BRITANNIA.NS",
-  "GRASIM.NS","COALINDIA.NS","EICHERMOT.NS","HEROMOTOCO.NS","INDUSINDBK.NS",
-  "ZOMATO.NS","IRCTC.NS","DMART.NS","TATAPOWER.NS","ADANIGREEN.NS",
-  "DLF.NS","GODREJCP.NS","MARICO.NS","DABUR.NS","TVSMOTOR.NS",
-];
+// Movers symbols are loaded from the DB at runtime (see fetchMoversSymbols).
+// This fallback is used only when the DB has no stocks yet.
+const MOVERS_FALLBACK: string[] = [];
 
 const VALID_RANGES = new Set(["1d","5d","1mo","3mo","6mo","1y","5y","max"]);
 const VALID_INTERVALS = new Set(["1m","5m","15m","1d","1wk","1mo"]);
@@ -92,6 +83,27 @@ function json(req: Request, body: unknown, status = 200): Response {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
+}
+
+// Fetch up to 100 yahoo_symbol values from the stocks table for use as movers universe
+let moversSymbolsCache: { symbols: string[]; exp: number } | null = null;
+async function fetchMoversSymbols(): Promise<string[]> {
+  if (moversSymbolsCache && Date.now() < moversSymbolsCache.exp) return moversSymbolsCache.symbols;
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const serviceKey  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    const sb = createClient(supabaseUrl, serviceKey);
+    const { data } = await sb
+      .from("stocks")
+      .select("yahoo_symbol")
+      .not("yahoo_symbol", "is", null)
+      .limit(100);
+    const symbols = (data ?? []).map((r: any) => r.yahoo_symbol as string).filter(Boolean);
+    moversSymbolsCache = { symbols, exp: Date.now() + 5 * 60_000 };
+    return symbols.length ? symbols : MOVERS_FALLBACK;
+  } catch {
+    return MOVERS_FALLBACK;
+  }
 }
 
 async function fetchYahooQuote(sym: string): Promise<any | null> {
@@ -184,7 +196,12 @@ Deno.serve(async (req: Request) => {
     if (moversFlag === "true") {
       if (moversCache && Date.now() < moversCache.exp) return json(req, moversCache.data);
 
-      const settled = await Promise.allSettled(MOVERS_SYMBOLS.map(async (sym) => {
+      const moversSymbols = await fetchMoversSymbols();
+      if (!moversSymbols.length) {
+        return json(req, { gainers: [], losers: [] });
+      }
+
+      const settled = await Promise.allSettled(moversSymbols.map(async (sym) => {
         const res = await fetch(
           `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=5d&interval=1d&includePrepost=false`,
           { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(8_000) }

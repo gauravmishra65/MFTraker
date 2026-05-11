@@ -621,4 +621,22 @@ export const api = {
   }
 };
 
+// ---------- STOCK SEARCH (NSE/BSE via Yahoo Finance edge function) ----------
+
+export const stockSearchApi = {
+  async search(q: string, exchange?: string): Promise<any[]> {
+    const params = new URLSearchParams({ q });
+    if (exchange) params.set("exchange", exchange);
+    const data = await edgeFetch<{ results: any[] }>(`/stock-search?${params}`);
+    return data.results ?? [];
+  },
+
+  async save(stocks: any[]): Promise<{ saved: number; stocks: any[] }> {
+    return edgeFetch("/stock-search", {
+      method: "POST",
+      body: JSON.stringify({ stocks }),
+    });
+  },
+};
+
 export const wsBaseUrl = "";
