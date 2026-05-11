@@ -176,17 +176,22 @@ export default function Watchlist() {
                     {items.map((it) => {
                       const ySym = it.stock?.yahooSymbol;
                       const q = ySym ? quotes[ySym] : null;
-                      const price = q?.price;
+                      // For MF items use DB nav as price; live intraday not available via Yahoo
+                      const isMf = !it.stock && !!it.mf;
+                      const price = isMf ? (it.mf as any)?.nav : q?.price;
                       const ch = q?.changePct;
                       return (
                         <tr key={it.id} className="border-t border-slate-100 dark:border-slate-800">
                           <td className="px-5 py-2">
                             <div className="font-medium">{it.stock?.name ?? it.mf?.name ?? "—"}</div>
-                            <div className="text-xs text-slate-500">{it.stock?.symbol ?? it.mf?.schemeCode ?? ""}</div>
+                            <div className="text-xs text-slate-500">
+                              {it.stock?.symbol ?? (it.mf as any)?.schemeCode ?? ""}
+                              {isMf && <span className="ml-1 text-[10px] text-slate-400">NAV</span>}
+                            </div>
                           </td>
                           <td className="px-3 py-2 text-right font-mono">{price != null ? formatINR(price) : "—"}</td>
                           <td className={classNames("px-3 py-2 text-right font-mono", changeColor(ch))}>
-                            {ch != null ? formatPct(ch) : "—"}
+                            {ch != null ? formatPct(ch) : <span className="text-slate-400">—</span>}
                           </td>
                           <td className="px-3 py-2 text-right font-mono text-xs text-slate-500">
                             {q?.high != null && q?.low != null ? `${q.high.toFixed(2)} / ${q.low.toFixed(2)}` : "—"}

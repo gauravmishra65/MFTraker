@@ -25,6 +25,8 @@ interface FundData {
   benchmark: string | null;
   fund_manager: string | null;
   inception_date: string | null;
+  nav: number | null;
+  scheme_code: string | null;
 }
 
 interface HoldingData {
@@ -76,12 +78,16 @@ export default function MFDetail() {
         <p className="text-sm text-slate-500 mt-1">{f?.amc} · {f?.category}{f?.sub_category ? ` · ${f.sub_category}` : ""}</p>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <Stat label="AUM" value={f?.aum ? `₹${f.aum} Cr` : "—"} />
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+        <Stat label="NAV (latest)" value={f?.nav != null ? formatINR(f.nav) : "—"} highlight />
+        <Stat label="AUM" value={f?.aum ? `₹${(f.aum / 100).toFixed(0)} Cr` : "—"} />
         <Stat label="Expense ratio" value={f?.expense_ratio != null ? `${f.expense_ratio}%` : "—"} />
         <Stat label="Min SIP" value={f?.min_sip ? formatINR(f.min_sip) : "—"} />
         <Stat label="Risk level" value={f?.risk_level ?? "—"} />
       </div>
+      {f?.benchmark && (
+        <p className="text-xs text-slate-400">Benchmark: {f.benchmark}{f.fund_manager ? ` · Fund manager: ${f.fund_manager}` : ""}</p>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card className="lg:col-span-2">
@@ -152,12 +158,12 @@ export default function MFDetail() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
     <Card>
       <CardBody className="pt-5">
         <div className="text-xs text-slate-500">{label}</div>
-        <div className="mt-2 font-semibold text-xl tracking-tight">{value}</div>
+        <div className={`mt-2 font-semibold text-xl tracking-tight ${highlight ? "text-brand-600 dark:text-brand-400" : ""}`}>{value}</div>
       </CardBody>
     </Card>
   );

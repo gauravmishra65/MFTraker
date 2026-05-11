@@ -21,6 +21,10 @@ const RATE_LIMIT_MAX = 10;
 
 function checkRateLimit(userId: string): boolean {
   const now = Date.now();
+  // Inline cleanup to avoid setInterval keeping the edge function alive
+  for (const [k, v] of rateLimitMap) {
+    if (now > v.resetAt) rateLimitMap.delete(k);
+  }
   const entry = rateLimitMap.get(userId);
   if (!entry || now > entry.resetAt) {
     rateLimitMap.set(userId, { count: 1, resetAt: now + RATE_LIMIT_WINDOW });
@@ -29,13 +33,6 @@ function checkRateLimit(userId: string): boolean {
   entry.count++;
   return entry.count <= RATE_LIMIT_MAX;
 }
-
-setInterval(() => {
-  const now = Date.now();
-  for (const [k, v] of rateLimitMap) {
-    if (now > v.resetAt) rateLimitMap.delete(k);
-  }
-}, 120_000);
 
 function jsonRes(req: Request, body: unknown, status = 200, extra: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {

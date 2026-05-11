@@ -1,6 +1,7 @@
 import { useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
+import { useAuthStore } from "@/store/auth";
 
 import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 
@@ -53,6 +54,7 @@ interface ShareholdingPattern {
 export default function StockDetail() {
   const { symbol = "" } = useParams();
   const qc = useQueryClient();
+  const user = useAuthStore((s) => s.user);
 
   const quote = useQuery({
     queryKey: ["quote", symbol],
@@ -87,7 +89,9 @@ export default function StockDetail() {
     queryFn: async () => {
       const res = await api.get("/watchlists");
       return (res.data as { watchlists: { id: string; name: string }[] }).watchlists;
-    }
+    },
+    enabled: !!user,
+    staleTime: 60_000,
   });
 
   const addToWatch = useMutation({

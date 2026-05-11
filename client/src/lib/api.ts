@@ -158,17 +158,19 @@ export const stocksApi = {
       exchange: s.exchange
     }));
 
-    const needsQuotes = filters.minPrice != null || filters.maxPrice != null;
-    if (results.length > 0 && needsQuotes) {
+    if (results.length > 0) {
       const quotes = await fetchQuotesBatched(results.map((r) => r.yahooSymbol));
       results = results.map((r) => ({ ...r, quote: quotes[r.yahooSymbol] ?? null }));
-      results = results.filter((r) => {
-        const p = r.quote?.price;
-        if (p == null) return false;
-        if (filters.minPrice != null && p < filters.minPrice) return false;
-        if (filters.maxPrice != null && p > filters.maxPrice) return false;
-        return true;
-      });
+      // Apply price filters when specified (client-side after live quote fetch)
+      if (filters.minPrice != null || filters.maxPrice != null) {
+        results = results.filter((r) => {
+          const p = r.quote?.price;
+          if (p == null) return false;
+          if (filters.minPrice != null && p < filters.minPrice) return false;
+          if (filters.maxPrice != null && p > filters.maxPrice) return false;
+          return true;
+        });
+      }
     }
 
     return { results, total: count ?? 0 };
@@ -207,7 +209,11 @@ export const stocksApi = {
       .neq("id", me.id)
       .limit(6);
     if (error) throw error;
-    return data ?? [];
+    return (data ?? []).map((s) => ({
+      ...s,
+      yahooSymbol: s.yahoo_symbol,
+      capCategory: s.cap_category,
+    }));
   }
 };
 
@@ -335,11 +341,34 @@ export const watchlistsApi = {
     if (!user) throw new Error("Not authenticated");
     const { data, error } = await supabase
       .from("watchlists")
-      .select("*, items:watchlist_items(*, stock:stocks(*), mf:mutual_funds(*))")
+      .select(`
+        *,
+        items:watchlist_items(
+          *,
+          stock:stocks(id, symbol, yahoo_symbol, name, sector, cap_category, exchange),
+          mf:mutual_funds(id, scheme_code, name, amc, category, nav)
+        )
+      `)
       .eq("user_id", user.id)
       .order("position");
     if (error) throw error;
-    return { watchlists: data ?? [] };
+    // Map snake_case DB fields to camelCase for component consumption
+    const watchlists = (data ?? []).map((w: any) => ({
+      ...w,
+      items: (w.items ?? []).map((it: any) => ({
+        ...it,
+        stock: it.stock ? {
+          ...it.stock,
+          yahooSymbol: it.stock.yahoo_symbol,
+          capCategory: it.stock.cap_category,
+        } : null,
+        mf: it.mf ? {
+          ...it.mf,
+          schemeCode: it.mf.scheme_code,
+        } : null,
+      })),
+    }));
+    return { watchlists };
   },
 
   async create(name: string) {
@@ -383,9 +412,18 @@ export const alertsApi = {
   async getAll() {
     const user = useAuthStore.getState().user;
     if (!user) throw new Error("Not authenticated");
-    const { data, error } = await supabase.from("alerts").select("*").eq("user_id", user.id).order("created_at", { ascending: false });
+    const { data, error } = await supabase
+      .from("alerts")
+      .select("id, symbol, type, threshold, active, triggered_at, created_at")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false });
     if (error) throw error;
-    return { alerts: data ?? [] };
+    return {
+      alerts: (data ?? []).map((a) => ({
+        ...a,
+        triggeredAt: a.triggered_at,
+      })),
+    };
   },
 
   async create(alert: { symbol: string; stockId?: string; type: string; threshold: number }) {
@@ -447,6 +485,11 @@ export const marketApi = {
   async getQuote(symbol: string) {
     const data = await edgeFetch<Record<string, any>>(`/market-data?symbols=${encodeURIComponent(symbol)}`);
     return data[symbol] ?? null;
+  },
+
+  async getQuotes(symbols: string[]): Promise<Record<string, any>> {
+    if (!symbols.length) return {};
+    return fetchQuotesBatched(symbols);
   },
 
   async getHistory(symbol: string, range: string, interval: string) {
