@@ -50,110 +50,182 @@ function maxDrawdown(closes: number[]): number {
   return maxDD;
 }
 
-// Returns closes from the last N months of data
 function lastNMonths(closes: number[], n: number): number[] {
   if (closes.length <= n) return closes;
   return closes.slice(closes.length - n - 1);
 }
 
+// ── Alpha Vantage symbol translation ─────────────────────────────────────────
+// Yahoo Finance uses SYMBOL.NS (NSE) or SYMBOL.BO (BSE).
+// Alpha Vantage uses SYMBOL.BSE for both Indian exchanges.
+// For non-Indian tickers (no suffix) pass through as-is.
+
+function toAlphaVantageSymbol(yahooSymbol: string): string {
+  if (yahooSymbol.endsWith(".NS") || yahooSymbol.endsWith(".BO")) {
+    return yahooSymbol.replace(/\.(NS|BO)$/, ".BSE");
+  }
+  return yahooSymbol;
+}
+
+function parseNum(v: string | undefined): number | null {
+  if (v == null || v === "None" || v === "-" || v === "") return null;
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+// ── Alpha Vantage fundamentals (with DB cache) ────────────────────────────────
+
+async function fetchFundamentals(
+  yahooSymbol: string,
+  db: ReturnType<typeof createClient>
+): Promise<Record<string, number | null>> {
+  const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+  // Check DB cache first
+  const { data: cached } = await db
+    .from("fundamentals_cache")
+    .select("data, fetched_at")
+    .eq("yahoo_symbol", yahooSymbol)
+    .maybeSingle();
+
+  if (cached && Date.now() - new Date(cached.fetched_at).getTime() < CACHE_TTL_MS) {
+    return cached.data as Record<string, number | null>;
+  }
+
+  const avKey = Deno.env.get("ALPHA_VANTAGE_KEY") ?? "";
+  if (!avKey) {
+    // No key configured — return nulls rather than crash
+    return { pe: null, pb: null, roe: null, dividendYieldPct: null, marketCap: null, fiftyTwoWeekHigh: null, fiftyTwoWeekLow: null };
+  }
+
+  const avSymbol = toAlphaVantageSymbol(yahooSymbol);
+
+  let fundamentals: Record<string, number | null> = {
+    pe: null, pb: null, roe: null, dividendYieldPct: null,
+    marketCap: null, fiftyTwoWeekHigh: null, fiftyTwoWeekLow: null,
+  };
+
+  try {
+    const res = await fetch(
+      `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${encodeURIComponent(avSymbol)}&apikey=${avKey}`,
+      { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(12_000) }
+    );
+
+    if (res.ok) {
+      const d = await res.json();
+      // Alpha Vantage returns {} or { "Note": "..." } on rate-limit / no data
+      if (d && typeof d === "object" && d.Symbol) {
+        const divYield = parseNum(d.DividendYield);
+        fundamentals = {
+          pe:               parseNum(d.TrailingPE),
+          pb:               parseNum(d.PriceToBookRatio),
+          roe:              parseNum(d.ReturnOnEquityTTM) != null
+                              ? (parseNum(d.ReturnOnEquityTTM)! * 100)
+                              : null,
+          // Alpha Vantage DividendYield is already a decimal fraction (e.g. 0.0132)
+          dividendYieldPct: divYield != null ? divYield * 100 : null,
+          marketCap:        parseNum(d.MarketCapitalization),
+          fiftyTwoWeekHigh: parseNum(d["52WeekHigh"]),
+          fiftyTwoWeekLow:  parseNum(d["52WeekLow"]),
+        };
+
+        // Persist to cache (upsert)
+        await db
+          .from("fundamentals_cache")
+          .upsert({ yahoo_symbol: yahooSymbol, data: fundamentals, fetched_at: new Date().toISOString() });
+      }
+    }
+  } catch { /* leave fundamentals as nulls */ }
+
+  return fundamentals;
+}
+
 // ── Stock research ─────────────────────────────────────────────────────────────
 
-async function fetchStockResearch(yahooSymbol: string): Promise<any> {
+async function fetchStockResearch(
+  yahooSymbol: string,
+  db: ReturnType<typeof createClient>
+): Promise<any> {
   const headers = { "User-Agent": "Mozilla/5.0", Accept: "application/json" };
-  const signal  = AbortSignal.timeout(15_000);
 
-  const [summaryRes, chartRes] = await Promise.allSettled([
-    fetch(
-      `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(yahooSymbol)}?modules=financialData,summaryDetail,defaultKeyStatistics,recommendationTrend`,
-      { headers, signal }
-    ),
-    fetch(
-      `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?range=5y&interval=1mo`,
-      { headers, signal }
-    ),
-  ]);
-
-  // ── Parse summary modules ──
-  let financialData: any = {};
-  let summaryDetail: any = {};
-  let keyStats: any     = {};
-  let recTrend: any[]   = [];
-
-  if (summaryRes.status === "fulfilled" && summaryRes.value.ok) {
-    const d = await summaryRes.value.json();
-    const r = d?.quoteSummary?.result?.[0];
-    if (r) {
-      financialData = r.financialData ?? {};
-      summaryDetail = r.summaryDetail   ?? {};
-      keyStats      = r.defaultKeyStatistics ?? {};
-      recTrend      = r.recommendationTrend?.trend ?? [];
-    }
-  }
-
-  // ── Parse chart / monthly closes ──
+  // Fetch chart (history) — still works without crumb cookie
   let closes5Y: number[] = [];
+  let currentPrice = 0;
 
-  if (chartRes.status === "fulfilled" && chartRes.value.ok) {
-    const d  = await chartRes.value.json();
-    const result = d?.chart?.result?.[0];
-    const q  = result?.indicators?.quote?.[0];
-    const rawCloses: (number | null)[] = q?.close ?? [];
-    closes5Y = rawCloses.filter((c): c is number => c != null && c > 0);
-  }
+  try {
+    const chartRes = await fetch(
+      `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?range=5y&interval=1mo`,
+      { headers, signal: AbortSignal.timeout(15_000) }
+    );
+    if (chartRes.ok) {
+      const d = await chartRes.json();
+      const result = d?.chart?.result?.[0];
+      const meta   = result?.meta;
+      const q      = result?.indicators?.quote?.[0];
+      const rawCloses: (number | null)[] = q?.close ?? [];
+      closes5Y = rawCloses.filter((c): c is number => c != null && c > 0);
+      currentPrice = meta?.regularMarketPrice ?? closes5Y[closes5Y.length - 1] ?? 0;
+    }
+  } catch { /* leave empty */ }
+
+  // Fetch analyst consensus — recommendationTrend module still works
+  let recTrend: any[] = [];
+  let analystRaw: any = {};
+
+  try {
+    const sumRes = await fetch(
+      `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(yahooSymbol)}?modules=financialData,recommendationTrend`,
+      { headers, signal: AbortSignal.timeout(12_000) }
+    );
+    if (sumRes.ok) {
+      const d = await sumRes.json();
+      const r = d?.quoteSummary?.result?.[0];
+      if (r) {
+        analystRaw  = r.financialData ?? {};
+        recTrend    = r.recommendationTrend?.trend ?? [];
+      }
+    }
+  } catch { /* leave empty */ }
+
+  // ── Fundamentals via Alpha Vantage (cached) ──
+  const fundamentals = await fetchFundamentals(yahooSymbol, db);
 
   // ── History metrics ──
-  const closes1Y = lastNMonths(closes5Y, 12);
-  const closes3Y = lastNMonths(closes5Y, 36);
-
-  const mRet5Y = monthlyReturns(closes5Y);
-  const annVol = stddev(mRet5Y) * Math.sqrt(12);
-
-  const cagr1Y = closes1Y.length >= 2 ? annualisedReturn(closes1Y, 1)   : null;
-  const cagr3Y = closes3Y.length >= 2 ? annualisedReturn(closes3Y, 3)   : null;
-  const cagr5Y = closes5Y.length >= 2 ? annualisedReturn(closes5Y, 5)   : null;
-  const maxDD  = closes5Y.length >= 2 ? maxDrawdown(closes5Y)           : null;
+  const closes1Y  = lastNMonths(closes5Y, 12);
+  const closes3Y  = lastNMonths(closes5Y, 36);
+  const mRet5Y    = monthlyReturns(closes5Y);
+  const annVol    = stddev(mRet5Y) * Math.sqrt(12);
+  const cagr1Y    = closes1Y.length >= 2 ? annualisedReturn(closes1Y, 1) : null;
+  const cagr3Y    = closes3Y.length >= 2 ? annualisedReturn(closes3Y, 3) : null;
+  const cagr5Y    = closes5Y.length >= 2 ? annualisedReturn(closes5Y, 5) : null;
+  const maxDD     = closes5Y.length >= 2 ? maxDrawdown(closes5Y) : null;
 
   // ── Projections ──
   const baseRate = cagr5Y ?? cagr3Y ?? cagr1Y ?? 0;
-  // σ in annual terms capped at 1 so extreme vols don't blow up bear
-  const sigma = Math.min(annVol, 1);
-  const currentPrice = (financialData.currentPrice?.raw as number | undefined)
-    ?? closes5Y[closes5Y.length - 1]
-    ?? 0;
-
-  const BEAR_CAP_PER_YEAR = -0.50;
+  const sigma    = Math.min(annVol, 1);
+  const BEAR_CAP = -0.50;
   const projections = [1, 2, 3, 5].map((years) => {
-    const base = currentPrice * Math.pow(1 + baseRate, years);
-    const bull = currentPrice * Math.pow(1 + baseRate + sigma, years);
-    const bearRate = Math.max(baseRate - sigma, BEAR_CAP_PER_YEAR);
-    const bear = currentPrice * Math.pow(1 + bearRate, years);
+    const base     = currentPrice * Math.pow(1 + baseRate, years);
+    const bull     = currentPrice * Math.pow(1 + baseRate + sigma, years);
+    const bearRate = Math.max(baseRate - sigma, BEAR_CAP);
+    const bear     = currentPrice * Math.pow(1 + bearRate, years);
     return { years, bear: Math.round(bear * 100) / 100, base: Math.round(base * 100) / 100, bull: Math.round(bull * 100) / 100 };
   });
 
-  // ── Latest recommendation (most recent trend entry) ──
+  // ── Analyst ──
   const latestRec = recTrend[0] ?? {};
-  const targetMean  = financialData.targetMeanPrice?.raw  as number | undefined;
-  const targetHigh  = financialData.targetHighPrice?.raw  as number | undefined;
-  const targetLow   = financialData.targetLowPrice?.raw   as number | undefined;
-  const numAnalysts = financialData.numberOfAnalystOpinions?.raw as number | undefined;
-  const recKey      = financialData.recommendationKey    as string | undefined;
+  const targetMean  = analystRaw.targetMeanPrice?.raw  as number | undefined;
+  const targetHigh  = analystRaw.targetHighPrice?.raw  as number | undefined;
+  const targetLow   = analystRaw.targetLowPrice?.raw   as number | undefined;
+  const numAnalysts = analystRaw.numberOfAnalystOpinions?.raw as number | undefined;
+  const recKey      = analystRaw.recommendationKey as string | undefined;
   const upsidePct   = targetMean && currentPrice > 0
     ? ((targetMean - currentPrice) / currentPrice) * 100
     : null;
 
   return {
     fundamentals: {
-      pe:               (keyStats.trailingPE?.raw       as number | undefined) ?? (summaryDetail.trailingPE?.raw as number | undefined) ?? null,
-      pb:               keyStats.priceToBook?.raw        as number | undefined ?? null,
-      roe:              (financialData.returnOnEquity?.raw as number | undefined) != null
-                          ? (financialData.returnOnEquity.raw as number) * 100
-                          : null,
-      dividendYieldPct: (summaryDetail.dividendYield?.raw as number | undefined) != null
-                          ? (summaryDetail.dividendYield.raw as number) * 100
-                          : null,
-      marketCap:        summaryDetail.marketCap?.raw     as number | undefined ?? null,
-      fiftyTwoWeekHigh: summaryDetail.fiftyTwoWeekHigh?.raw as number | undefined ?? null,
-      fiftyTwoWeekLow:  summaryDetail.fiftyTwoWeekLow?.raw  as number | undefined ?? null,
+      ...fundamentals,
     },
     analyst: {
       targetMean:        targetMean        ?? null,
@@ -169,9 +241,9 @@ async function fetchStockResearch(yahooSymbol: string): Promise<any> {
       strongSell:  latestRec.strongSell  ?? null,
     },
     history: {
-      cagr1Y:             cagr1Y != null ? Math.round(cagr1Y * 10000) / 100 : null,
-      cagr3Y:             cagr3Y != null ? Math.round(cagr3Y * 10000) / 100 : null,
-      cagr5Y:             cagr5Y != null ? Math.round(cagr5Y * 10000) / 100 : null,
+      cagr1Y:              cagr1Y != null ? Math.round(cagr1Y * 10000) / 100 : null,
+      cagr3Y:              cagr3Y != null ? Math.round(cagr3Y * 10000) / 100 : null,
+      cagr5Y:              cagr5Y != null ? Math.round(cagr5Y * 10000) / 100 : null,
       volatilityAnnualPct: annVol  > 0   ? Math.round(annVol * 10000) / 100 : null,
       maxDrawdownPct:      maxDD   != null ? Math.round(maxDD * 10000) / 100 : null,
     },
@@ -183,7 +255,6 @@ async function fetchStockResearch(yahooSymbol: string): Promise<any> {
 // ── MF research ───────────────────────────────────────────────────────────────
 
 async function fetchMfResearch(mfId: string, userId: string, db: ReturnType<typeof createClient>): Promise<any> {
-  // Fetch fund metadata
   const { data: fund } = await db
     .from("mutual_funds")
     .select("id, name, scheme_code, category, sub_category, nav")
@@ -192,7 +263,6 @@ async function fetchMfResearch(mfId: string, userId: string, db: ReturnType<type
 
   if (!fund) return null;
 
-  // Fetch user's transactions for this fund to compute holding-period CAGR
   const { data: txns } = await db
     .from("portfolio_transactions")
     .select("date, quantity, price, type")
@@ -202,13 +272,12 @@ async function fetchMfResearch(mfId: string, userId: string, db: ReturnType<type
 
   const currentNav = fund.nav as number | null ?? 0;
 
-  // Compute weighted average cost and earliest BUY date for CAGR
   let totalUnits = 0;
   let totalCost  = 0;
   let earliestDate: Date | null = null;
 
   for (const tx of txns ?? []) {
-    const isBuy = ["SIP", "LUMPSUM", "BUY"].includes(tx.type);
+    const isBuy  = ["SIP", "LUMPSUM", "BUY"].includes(tx.type);
     const isSell = ["REDEEM", "SELL"].includes(tx.type);
     if (isBuy) {
       totalUnits += tx.quantity;
@@ -220,12 +289,11 @@ async function fetchMfResearch(mfId: string, userId: string, db: ReturnType<type
     }
   }
 
-  const avgCost = totalUnits > 0 ? totalCost / totalUnits : 0;
+  const avgCost      = totalUnits > 0 ? totalCost / totalUnits : 0;
   const currentValue = totalUnits * currentNav;
-  const invested = totalUnits * avgCost;
-  const pnl = currentValue - invested;
+  const invested     = totalUnits * avgCost;
+  const pnl          = currentValue - invested;
 
-  // Holding period in years (minimum 1/12 to avoid division issues)
   const holdingYears = earliestDate
     ? Math.max((Date.now() - earliestDate.getTime()) / (365.25 * 24 * 3600 * 1000), 1 / 12)
     : 1;
@@ -234,7 +302,6 @@ async function fetchMfResearch(mfId: string, userId: string, db: ReturnType<type
     ? Math.pow(currentNav / avgCost, 1 / holdingYears) - 1
     : null;
 
-  // Fetch NAV history from mfapi.in for CAGR validation
   let cagr1Y: number | null = null;
   let cagr3Y: number | null = null;
   let cagr5Y: number | null = null;
@@ -250,7 +317,7 @@ async function fetchMfResearch(mfId: string, userId: string, db: ReturnType<type
         const navs: number[] = (d?.data ?? [])
           .map((x: any) => parseFloat(x.nav))
           .filter((n: number) => Number.isFinite(n) && n > 0)
-          .reverse(); // oldest first
+          .reverse();
 
         if (navs.length >= 2) {
           const c1 = lastNMonths(navs, 12);
@@ -264,10 +331,9 @@ async function fetchMfResearch(mfId: string, userId: string, db: ReturnType<type
     } catch { /* optional */ }
   }
 
-  // Projections: use history CAGR if available, else holding-period CAGR
   const baseRate = cagr5Y ?? cagr3Y ?? cagr1Y ?? holdingCagr ?? 0;
-  const BAND = 0.04; // ±4% band for MFs
-  const navBase = currentNav > 0 ? currentNav : avgCost;
+  const BAND     = 0.04;
+  const navBase  = currentNav > 0 ? currentNav : avgCost;
 
   const projections = [1, 2, 3, 5].map((years) => {
     const base = navBase * Math.pow(1 + baseRate, years);
@@ -278,24 +344,24 @@ async function fetchMfResearch(mfId: string, userId: string, db: ReturnType<type
 
   return {
     fundamentals: {
-      category:    fund.category    ?? null,
-      subCategory: fund.sub_category ?? null,
+      category:     fund.category    ?? null,
+      subCategory:  fund.sub_category ?? null,
       currentNav,
-      avgCostNav: avgCost > 0 ? Math.round(avgCost * 100) / 100 : null,
-      units: Math.round(totalUnits * 1000) / 1000,
-      invested: Math.round(invested * 100) / 100,
+      avgCostNav:   avgCost > 0 ? Math.round(avgCost * 100) / 100 : null,
+      units:        Math.round(totalUnits * 1000) / 1000,
+      invested:     Math.round(invested * 100) / 100,
       currentValue: Math.round(currentValue * 100) / 100,
-      pnl: Math.round(pnl * 100) / 100,
+      pnl:          Math.round(pnl * 100) / 100,
       holdingYears: Math.round(holdingYears * 10) / 10,
     },
     analyst: null,
     history: {
-      cagr1Y: cagr1Y != null ? Math.round(cagr1Y * 10000) / 100 : null,
-      cagr3Y: cagr3Y != null ? Math.round(cagr3Y * 10000) / 100 : null,
-      cagr5Y: cagr5Y != null ? Math.round(cagr5Y * 10000) / 100 : null,
-      holdingCagrPct: holdingCagr != null ? Math.round(holdingCagr * 10000) / 100 : null,
+      cagr1Y:              cagr1Y != null ? Math.round(cagr1Y * 10000) / 100 : null,
+      cagr3Y:              cagr3Y != null ? Math.round(cagr3Y * 10000) / 100 : null,
+      cagr5Y:              cagr5Y != null ? Math.round(cagr5Y * 10000) / 100 : null,
+      holdingCagrPct:      holdingCagr != null ? Math.round(holdingCagr * 10000) / 100 : null,
       volatilityAnnualPct: null,
-      maxDrawdownPct: null,
+      maxDrawdownPct:      null,
     },
     projections,
     currentPrice: currentNav,
@@ -310,19 +376,17 @@ Deno.serve(async (req: Request) => {
 
   try {
     const url  = new URL(req.url);
-    const type = url.searchParams.get("type"); // "stock" | "mf"
-    const id   = url.searchParams.get("id");   // instrument uuid
+    const type = url.searchParams.get("type");
+    const id   = url.searchParams.get("id");
 
     if (!type || !["stock", "mf"].includes(type)) return json({ error: "type must be stock or mf" }, 400);
     if (!id || !/^[0-9a-f-]{36}$/.test(id))       return json({ error: "Invalid id" }, 400);
 
-    // Authenticate user from JWT
-    const authHeader = req.headers.get("Authorization") ?? "";
+    const authHeader  = req.headers.get("Authorization") ?? "";
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const serviceKey  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
     const anonKey     = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 
-    // Use anon client with the user's JWT to validate auth
     const userClient = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authHeader } },
     });
@@ -332,14 +396,13 @@ Deno.serve(async (req: Request) => {
     const db = createClient(supabaseUrl, serviceKey);
 
     if (type === "stock") {
-      // Look up yahoo_symbol for the stock uuid
       const { data: stock } = await db
         .from("stocks")
         .select("yahoo_symbol, symbol, name")
         .eq("id", id)
         .maybeSingle();
       if (!stock) return json({ error: "Stock not found" }, 404);
-      const result = await fetchStockResearch(stock.yahoo_symbol ?? stock.symbol);
+      const result = await fetchStockResearch(stock.yahoo_symbol ?? stock.symbol, db);
       return json({ type: "stock", name: stock.name, symbol: stock.symbol, ...result });
     } else {
       const result = await fetchMfResearch(id, user.id, db);
