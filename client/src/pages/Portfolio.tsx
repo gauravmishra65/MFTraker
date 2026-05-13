@@ -140,27 +140,115 @@ export default function Portfolio() {
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
+type SortCol = "symbol" | "quantity" | "avgPrice" | "ltp" | "invested" | "currentValue" | "pnl";
+type SortDir = "desc" | "asc" | "off";
+
+const NEXT_DIR: Record<SortDir, SortDir> = { desc: "asc", asc: "off", off: "desc" };
+
+function sortHoldings(holdings: Holding[], col: SortCol, dir: SortDir): Holding[] {
+  if (dir === "off") return holdings;
+  return [...holdings].sort((a, b) => {
+    const av = col === "symbol" ? a.symbol : (a[col] as number);
+    const bv = col === "symbol" ? b.symbol : (b[col] as number);
+    if (col === "symbol") {
+      const cmp = (av as string).localeCompare(bv as string);
+      return dir === "asc" ? cmp : -cmp;
+    }
+    const cmp = (av as number) - (bv as number);
+    return dir === "asc" ? cmp : -cmp;
+  });
+}
+
+function SortIcon({ dir }: { dir: SortDir }) {
+  if (dir === "off") return null;
+  return <span className="ml-1 opacity-70">{dir === "desc" ? "↓" : "↑"}</span>;
+}
+
 function HoldingsTable({ title, holdings, emptyMsg }: { title: string; holdings: Holding[]; emptyMsg: string }) {
+  const [sortCol, setSortCol] = useState<SortCol>("pnl");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  function handleSort(col: SortCol) {
+    if (col === sortCol) {
+      const next = NEXT_DIR[sortDir];
+      setSortDir(next);
+      if (next === "off") setSortCol("pnl");
+    } else {
+      setSortCol(col);
+      setSortDir("desc");
+    }
+  }
+
+  const sorted = useMemo(() => sortHoldings(holdings, sortCol, sortDir), [holdings, sortCol, sortDir]);
+
+  const summary = useMemo(() => holdings.reduce(
+    (acc, h) => ({ invested: acc.invested + h.invested, currentValue: acc.currentValue + h.currentValue, pnl: acc.pnl + h.pnl, dayChange: acc.dayChange + h.dayChange }),
+    { invested: 0, currentValue: 0, pnl: 0, dayChange: 0 }
+  ), [holdings]);
+
+  function th(col: SortCol, label: string, align: "left" | "right", extraCls = "") {
+    const active = sortCol === col && sortDir !== "off";
+    return (
+      <th
+        className={classNames(
+          `${align === "left" ? "text-left px-5" : "text-right px-3"} py-2 cursor-pointer select-none whitespace-nowrap`,
+          "hover:text-slate-700 dark:hover:text-slate-200 transition-colors",
+          active ? "text-slate-700 dark:text-slate-200" : "",
+          extraCls
+        )}
+        onClick={() => handleSort(col)}
+      >
+        {label}<SortIcon dir={col === sortCol ? sortDir : "off"} />
+      </th>
+    );
+  }
+
+  if (holdings.length === 0) {
+    return (
+      <Card>
+        <CardHeader><CardTitle>{title}</CardTitle></CardHeader>
+        <CardBody><p className="text-sm text-slate-500 py-4 text-center">{emptyMsg}</p></CardBody>
+      </Card>
+    );
+  }
+
   return (
     <Card>
-      <CardHeader><CardTitle>{title}</CardTitle></CardHeader>
+      <CardHeader>
+        <div className="flex items-center justify-between flex-wrap gap-3 w-full">
+          <CardTitle>{title} <span className="text-slate-400 text-sm font-normal ml-1">({holdings.length})</span></CardTitle>
+          <div className="flex gap-6 text-xs text-slate-500">
+            <span>Invested <span className="font-mono text-slate-700 dark:text-slate-200 ml-1">{formatINR(summary.invested, { compact: true })}</span></span>
+            <span>Value <span className="font-mono text-slate-700 dark:text-slate-200 ml-1">{formatINR(summary.currentValue, { compact: true })}</span></span>
+            <span>P&amp;L <span className={classNames("font-mono ml-1", changeColor(summary.pnl))}>{formatINR(summary.pnl, { compact: true })} ({formatPct(summary.invested ? (summary.pnl / summary.invested) * 100 : 0)})</span></span>
+          </div>
+        </div>
+      </CardHeader>
       <CardBody>
         <div className="overflow-x-auto -mx-5">
           <table className="w-full text-sm">
             <thead className="text-xs uppercase tracking-wide text-slate-500">
               <tr>
-                <th className="text-left px-5 py-2">Symbol / Fund</th>
-                <th className="text-right px-3 py-2">Qty</th>
-                <th className="text-right px-3 py-2">Avg</th>
-                <th className="text-right px-3 py-2">LTP / NAV</th>
-                <th className="text-right px-3 py-2">Invested</th>
-                <th className="text-right px-3 py-2">Value</th>
-                <th className="text-right px-5 py-2">P&L</th>
+                {th("symbol",       "Symbol / Fund", "left")}
+                {th("quantity",     "Qty",           "right")}
+                {th("avgPrice",     "Avg",           "right")}
+                {th("ltp",          "LTP / NAV",     "right")}
+                {th("invested",     "Invested",      "right")}
+                {th("currentValue", "Value",         "right")}
+                <th
+                  className={classNames(
+                    "text-right px-5 py-2 cursor-pointer select-none whitespace-nowrap hover:text-slate-700 dark:hover:text-slate-200 transition-colors",
+                    sortCol === "pnl" && sortDir !== "off" ? "text-slate-700 dark:text-slate-200" : ""
+                  )}
+                  onClick={() => handleSort("pnl")}
+                >
+                  P&amp;L<SortIcon dir={sortCol === "pnl" ? sortDir : "off"} />
+                </th>
               </tr>
             </thead>
             <tbody>
-              {holdings.map((h) => (
-                <tr key={h.id} className="border-t border-slate-100 dark:border-slate-800">
+              {sorted.map((h) => (
+                <tr key={h.id} className="border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
                   <td className="px-5 py-2">
                     <div className="font-medium">{h.symbol}</div>
                     <div className="text-xs text-slate-500 truncate max-w-xs">{h.name}</div>
@@ -176,9 +264,6 @@ function HoldingsTable({ title, holdings, emptyMsg }: { title: string; holdings:
                   </td>
                 </tr>
               ))}
-              {holdings.length === 0 && (
-                <tr><td colSpan={7} className="px-5 py-6 text-center text-slate-500 text-sm">{emptyMsg}</td></tr>
-              )}
             </tbody>
           </table>
         </div>
