@@ -36,7 +36,7 @@ export default function AppLayout() {
   const Sidebar = (
     <>
       <Link to="/" className="flex items-center gap-2 px-5 h-16 border-b border-slate-200 dark:border-slate-800">
-        <LineChart className="w-6 h-6 text-brand-500" />
+        <img src="/CAT.jpeg" alt="Tracker logo" className="w-8 h-8 object-contain dark:invert" />
         <span className="font-semibold tracking-tight">Tracker</span>
       </Link>
       <nav className="flex-1 px-3 py-4 space-y-1">
