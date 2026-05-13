@@ -148,16 +148,24 @@ async function fetchStockResearch(
 ): Promise<any> {
   const headers = { "User-Agent": "Mozilla/5.0", Accept: "application/json" };
 
-  // Fetch chart (history) — still works without crumb cookie
+  // Run Yahoo chart, Yahoo quoteSummary, and Alpha Vantage in parallel
+  const [chartRes, sumRes, fundamentals] = await Promise.all([
+    fetch(
+      `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?range=5y&interval=1mo`,
+      { headers, signal: AbortSignal.timeout(20_000) }
+    ).catch(() => null),
+    fetch(
+      `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(yahooSymbol)}?modules=financialData,recommendationTrend`,
+      { headers, signal: AbortSignal.timeout(15_000) }
+    ).catch(() => null),
+    fetchFundamentals(yahooSymbol, db),
+  ]);
+
+  // Parse chart
   let closes5Y: number[] = [];
   let currentPrice = 0;
-
   try {
-    const chartRes = await fetch(
-      `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?range=5y&interval=1mo`,
-      { headers, signal: AbortSignal.timeout(15_000) }
-    );
-    if (chartRes.ok) {
+    if (chartRes?.ok) {
       const d = await chartRes.json();
       const result = d?.chart?.result?.[0];
       const meta   = result?.meta;
@@ -166,29 +174,21 @@ async function fetchStockResearch(
       closes5Y = rawCloses.filter((c): c is number => c != null && c > 0);
       currentPrice = meta?.regularMarketPrice ?? closes5Y[closes5Y.length - 1] ?? 0;
     }
-  } catch { /* leave empty */ }
+  } catch (e) { console.error("chart parse error", e); }
 
-  // Fetch analyst consensus — recommendationTrend module still works
+  // Parse quoteSummary
   let recTrend: any[] = [];
   let analystRaw: any = {};
-
   try {
-    const sumRes = await fetch(
-      `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(yahooSymbol)}?modules=financialData,recommendationTrend`,
-      { headers, signal: AbortSignal.timeout(12_000) }
-    );
-    if (sumRes.ok) {
+    if (sumRes?.ok) {
       const d = await sumRes.json();
       const r = d?.quoteSummary?.result?.[0];
       if (r) {
-        analystRaw  = r.financialData ?? {};
-        recTrend    = r.recommendationTrend?.trend ?? [];
+        analystRaw = r.financialData ?? {};
+        recTrend   = r.recommendationTrend?.trend ?? [];
       }
     }
-  } catch { /* leave empty */ }
-
-  // ── Fundamentals via Alpha Vantage (cached) ──
-  const fundamentals = await fetchFundamentals(yahooSymbol, db);
+  } catch (e) { console.error("quoteSummary parse error", e); }
 
   // ── History metrics ──
   const closes1Y  = lastNMonths(closes5Y, 12);
