@@ -273,10 +273,18 @@ export const portfolioApi = {
     if (error) throw error;
 
     const stockIds = (holdings ?? []).filter((h) => h.instrument_type === "STOCK").map((h) => h.instrument_id);
+    const mfIds    = (holdings ?? []).filter((h) => h.instrument_type === "MF").map((h) => h.instrument_id);
+
     let stockMeta: Record<string, { yahooSymbol: string; sector: string | null }> = {};
     if (stockIds.length > 0) {
       const { data: stocksData } = await supabase.from("stocks").select("id, yahoo_symbol, sector").in("id", stockIds);
       for (const s of stocksData ?? []) stockMeta[s.id] = { yahooSymbol: s.yahoo_symbol, sector: s.sector };
+    }
+
+    let mfMeta: Record<string, { category: string | null; sub_category: string | null }> = {};
+    if (mfIds.length > 0) {
+      const { data: mfData } = await supabase.from("mutual_funds").select("id, category, sub_category").in("id", mfIds);
+      for (const m of mfData ?? []) mfMeta[m.id] = { category: m.category ?? null, sub_category: m.sub_category ?? null };
     }
 
     const yahooSymbols = Object.values(stockMeta).map((m) => m.yahooSymbol).filter(Boolean);
@@ -285,7 +293,8 @@ export const portfolioApi = {
       : {};
 
     const enriched = (holdings ?? []).map((h) => {
-      const meta = stockMeta[h.instrument_id];
+      const meta  = stockMeta[h.instrument_id];
+      const mfmet = mfMeta[h.instrument_id];
       const ySym = meta?.yahooSymbol;
       const q = ySym ? liveQuotes[ySym] : null;
       const ltp = q?.price ?? h.avg_price;
@@ -298,6 +307,8 @@ export const portfolioApi = {
         quantity: h.quantity, avgPrice: h.avg_price, invested: h.invested,
         ltp, currentValue, pnl, pnlPct, dayChange: dayCh * h.quantity,
         sector: meta?.sector ?? null,
+        category: mfmet?.category ?? null,
+        subCategory: mfmet?.sub_category ?? null,
       };
     });
 

@@ -26,6 +26,8 @@ interface Holding {
   pnlPct: number;
   dayChange: number;
   sector: string | null;
+  category: string | null;
+  subCategory: string | null;
 }
 
 interface PortfolioSummary {
@@ -52,7 +54,7 @@ export default function Portfolio() {
   const sectorData = useMemo(() => {
     const m = new Map<string, number>();
     for (const h of portfolio.data?.holdings ?? []) {
-      const key = h.sector ?? "Other";
+      const key = (h.instrumentType === "MF" ? h.subCategory ?? h.category : h.sector) ?? "Other";
       m.set(key, (m.get(key) ?? 0) + h.currentValue);
     }
     return [...m.entries()].map(([sector, value]) => ({ sector, value }));
@@ -97,82 +99,38 @@ export default function Portfolio() {
         <Stat label="Day's change"  value={formatINR(portfolio.data?.summary?.dayChange,    { compact: true })} subClass={changeColor(portfolio.data?.summary?.dayChange)} />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card className="lg:col-span-2">
-          <CardHeader><CardTitle>Holdings</CardTitle></CardHeader>
-          <CardBody>
-            <div className="overflow-x-auto -mx-5">
-              <table className="w-full text-sm">
-                <thead className="text-xs uppercase tracking-wide text-slate-500">
-                  <tr>
-                    <th className="text-left px-5 py-2">Symbol / Fund</th>
-                    <th className="text-left px-3 py-2">Type</th>
-                    <th className="text-right px-3 py-2">Qty</th>
-                    <th className="text-right px-3 py-2">Avg</th>
-                    <th className="text-right px-3 py-2">LTP / NAV</th>
-                    <th className="text-right px-3 py-2">Invested</th>
-                    <th className="text-right px-3 py-2">Value</th>
-                    <th className="text-right px-5 py-2">P&L</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(portfolio.data?.holdings ?? []).map((h) => (
-                    <tr key={h.id} className="border-t border-slate-100 dark:border-slate-800">
-                      <td className="px-5 py-2">
-                        <div className="font-medium">{h.symbol}</div>
-                        <div className="text-xs text-slate-500 truncate max-w-xs">{h.name}</div>
-                      </td>
-                      <td className="px-3 py-2">
-                        <span className={classNames(
-                          "text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full font-medium",
-                          h.instrumentType === "MF"
-                            ? "bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400"
-                            : "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-                        )}>
-                          {h.instrumentType === "MF" ? "MF" : "Stock"}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-right font-mono">{h.quantity}</td>
-                      <td className="px-3 py-2 text-right font-mono">{formatINR(h.avgPrice)}</td>
-                      <td className="px-3 py-2 text-right font-mono">{formatINR(h.ltp)}</td>
-                      <td className="px-3 py-2 text-right font-mono">{formatINR(h.invested, { compact: true })}</td>
-                      <td className="px-3 py-2 text-right font-mono">{formatINR(h.currentValue, { compact: true })}</td>
-                      <td className={classNames("px-5 py-2 text-right font-mono", changeColor(h.pnl))}>
-                        {formatINR(h.pnl, { compact: true })}
-                        <div className="text-xs">{formatPct(h.pnlPct)}</div>
-                      </td>
-                    </tr>
-                  ))}
-                  {!portfolio.data?.holdings?.length && (
-                    <tr><td colSpan={8} className="px-5 py-6 text-center text-slate-500 text-sm">No holdings yet.</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </CardBody>
-        </Card>
+      <Card>
+        <CardHeader><CardTitle>Sector / Category allocation</CardTitle></CardHeader>
+        <CardBody>
+          <div className="h-72">
+            {sectorData.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-sm text-slate-500">No data.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={sectorData} dataKey="value" nameKey="sector" innerRadius={50} outerRadius={90} paddingAngle={2}>
+                    {sectorData.map((_, i) => <Cell key={i} fill={SECTOR_COLORS[i % SECTOR_COLORS.length]} />)}
+                  </Pie>
+                  <Tooltip formatter={(v: number) => formatINR(v, { compact: true })} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </CardBody>
+      </Card>
 
-        <Card>
-          <CardHeader><CardTitle>Sector / Category allocation</CardTitle></CardHeader>
-          <CardBody>
-            <div className="h-72">
-              {sectorData.length === 0 ? (
-                <div className="h-full flex items-center justify-center text-sm text-slate-500">No data.</div>
-              ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={sectorData} dataKey="value" nameKey="sector" innerRadius={50} outerRadius={90} paddingAngle={2}>
-                      {sectorData.map((_, i) => <Cell key={i} fill={SECTOR_COLORS[i % SECTOR_COLORS.length]} />)}
-                    </Pie>
-                    <Tooltip formatter={(v: number) => formatINR(v, { compact: true })} />
-                    <Legend wrapperStyle={{ fontSize: 12 }} />
-                  </PieChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </CardBody>
-        </Card>
-      </div>
+      <HoldingsTable
+        title="Stock holdings"
+        holdings={(portfolio.data?.holdings ?? []).filter((h) => h.instrumentType === "STOCK")}
+        emptyMsg="No stock holdings yet."
+      />
+
+      <HoldingsTable
+        title="Mutual Fund holdings"
+        holdings={(portfolio.data?.holdings ?? []).filter((h) => h.instrumentType === "MF")}
+        emptyMsg="No mutual fund holdings yet."
+      />
 
       {showAdd    && <AddTransactionModal onClose={() => setShowAdd(false)}    onSuccess={invalidate} />}
       {showImport && <ImportCsvModal      onClose={() => setShowImport(false)} onSuccess={invalidate} />}
@@ -181,6 +139,53 @@ export default function Portfolio() {
 }
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
+
+function HoldingsTable({ title, holdings, emptyMsg }: { title: string; holdings: Holding[]; emptyMsg: string }) {
+  return (
+    <Card>
+      <CardHeader><CardTitle>{title}</CardTitle></CardHeader>
+      <CardBody>
+        <div className="overflow-x-auto -mx-5">
+          <table className="w-full text-sm">
+            <thead className="text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="text-left px-5 py-2">Symbol / Fund</th>
+                <th className="text-right px-3 py-2">Qty</th>
+                <th className="text-right px-3 py-2">Avg</th>
+                <th className="text-right px-3 py-2">LTP / NAV</th>
+                <th className="text-right px-3 py-2">Invested</th>
+                <th className="text-right px-3 py-2">Value</th>
+                <th className="text-right px-5 py-2">P&L</th>
+              </tr>
+            </thead>
+            <tbody>
+              {holdings.map((h) => (
+                <tr key={h.id} className="border-t border-slate-100 dark:border-slate-800">
+                  <td className="px-5 py-2">
+                    <div className="font-medium">{h.symbol}</div>
+                    <div className="text-xs text-slate-500 truncate max-w-xs">{h.name}</div>
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono">{h.quantity}</td>
+                  <td className="px-3 py-2 text-right font-mono">{formatINR(h.avgPrice)}</td>
+                  <td className="px-3 py-2 text-right font-mono">{formatINR(h.ltp)}</td>
+                  <td className="px-3 py-2 text-right font-mono">{formatINR(h.invested, { compact: true })}</td>
+                  <td className="px-3 py-2 text-right font-mono">{formatINR(h.currentValue, { compact: true })}</td>
+                  <td className={classNames("px-5 py-2 text-right font-mono", changeColor(h.pnl))}>
+                    {formatINR(h.pnl, { compact: true })}
+                    <div className="text-xs">{formatPct(h.pnlPct)}</div>
+                  </td>
+                </tr>
+              ))}
+              {holdings.length === 0 && (
+                <tr><td colSpan={7} className="px-5 py-6 text-center text-slate-500 text-sm">{emptyMsg}</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
 
 function DownloadButton({ label, data }: { label: string; data: Holding[] }) {
   const [loading, setLoading] = useState(false);
