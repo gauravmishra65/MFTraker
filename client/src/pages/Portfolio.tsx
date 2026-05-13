@@ -212,15 +212,29 @@ function HoldingsTable({ title, holdings, emptyMsg }: { title: string; holdings:
     );
   }
 
+  const pnlPct = summary.invested ? (summary.pnl / summary.invested) * 100 : 0;
+
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-center justify-between flex-wrap gap-3 w-full">
+        <div className="w-full space-y-3">
           <CardTitle>{title} <span className="text-slate-400 text-sm font-normal ml-1">({holdings.length})</span></CardTitle>
-          <div className="flex gap-6 text-xs text-slate-500">
-            <span>Invested <span className="font-mono text-slate-700 dark:text-slate-200 ml-1">{formatINR(summary.invested, { compact: true })}</span></span>
-            <span>Value <span className="font-mono text-slate-700 dark:text-slate-200 ml-1">{formatINR(summary.currentValue, { compact: true })}</span></span>
-            <span>P&amp;L <span className={classNames("font-mono ml-1", changeColor(summary.pnl))}>{formatINR(summary.pnl, { compact: true })} ({formatPct(summary.invested ? (summary.pnl / summary.invested) * 100 : 0)})</span></span>
+          <div className="grid grid-cols-3 divide-x divide-slate-100 dark:divide-slate-800 rounded-lg border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40">
+            <div className="px-4 py-2.5">
+              <div className="text-xs text-slate-500 mb-0.5">Invested</div>
+              <div className="font-semibold font-mono text-sm text-slate-700 dark:text-slate-200">{formatINR(summary.invested, { compact: true })}</div>
+            </div>
+            <div className="px-4 py-2.5">
+              <div className="text-xs text-slate-500 mb-0.5">Current Value</div>
+              <div className="font-semibold font-mono text-sm text-slate-700 dark:text-slate-200">{formatINR(summary.currentValue, { compact: true })}</div>
+            </div>
+            <div className="px-4 py-2.5">
+              <div className="text-xs text-slate-500 mb-0.5">P&amp;L</div>
+              <div className={classNames("font-semibold font-mono text-sm", changeColor(summary.pnl))}>
+                {formatINR(summary.pnl, { compact: true })}
+                <span className="text-xs font-normal ml-1.5">({formatPct(pnlPct)})</span>
+              </div>
+            </div>
           </div>
         </div>
       </CardHeader>
