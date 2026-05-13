@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 
 import { api, portfolioApi, stocksApi, mfApi } from "@/lib/api";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
@@ -11,7 +11,20 @@ import { changeColor, classNames, formatINR, formatPct } from "@/lib/format";
 import { CircleAlert as AlertCircle, CircleCheck as CheckCircle2, Download, Plus, Upload, X, FlaskConical } from "lucide-react";
 import ResearchPanel from "@/components/research/ResearchPanel";
 
-const SECTOR_COLORS = ["#2f8df8", "#16a34a", "#f59e0b", "#dc2626", "#0ea5e9", "#65a30d", "#475569", "#ec4899"];
+const SECTOR_COLORS = [
+  "#2563eb", // blue-600
+  "#16a34a", // green-600
+  "#d97706", // amber-600
+  "#dc2626", // red-600
+  "#0891b2", // cyan-600
+  "#7c3aed", // violet-600  (only used if user explicitly has >5 sectors)
+  "#db2777", // pink-600
+  "#ea580c", // orange-600
+  "#0d9488", // teal-600
+  "#ca8a04", // yellow-600
+  "#4f46e5", // indigo-600
+  "#be123c", // rose-700
+];
 
 interface Holding {
   id: string;
@@ -102,26 +115,7 @@ export default function Portfolio() {
         <Stat label="Day's change"  value={formatINR(portfolio.data?.summary?.dayChange,    { compact: true })} subClass={changeColor(portfolio.data?.summary?.dayChange)} />
       </div>
 
-      <Card>
-        <CardHeader><CardTitle>Sector / Category allocation</CardTitle></CardHeader>
-        <CardBody>
-          <div className="h-72">
-            {sectorData.length === 0 ? (
-              <div className="h-full flex items-center justify-center text-sm text-slate-500">No data.</div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={sectorData} dataKey="value" nameKey="sector" innerRadius={50} outerRadius={90} paddingAngle={2}>
-                    {sectorData.map((_, i) => <Cell key={i} fill={SECTOR_COLORS[i % SECTOR_COLORS.length]} />)}
-                  </Pie>
-                  <Tooltip formatter={(v: number) => formatINR(v, { compact: true })} />
-                  <Legend wrapperStyle={{ fontSize: 12 }} />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-        </CardBody>
-      </Card>
+      <AllocationChart sectorData={sectorData} />
 
       <HoldingsTable
         title="Stock holdings"
@@ -143,6 +137,171 @@ export default function Portfolio() {
         <ResearchModal holding={researchHolding} onClose={() => setResearchHolding(null)} />
       )}
     </div>
+  );
+}
+
+// ─── Allocation chart ─────────────────────────────────────────────────────────
+
+interface SectorDatum { sector: string; value: number; }
+
+interface AllocationTooltipProps {
+  active?: boolean;
+  payload?: { name: string; value: number; payload: SectorDatum & { pct: number; color: string } }[];
+}
+
+function AllocationTooltip({ active, payload }: AllocationTooltipProps) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0].payload;
+  return (
+    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg px-3 py-2.5 text-sm min-w-[140px]">
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: d.color }} />
+        <span className="font-medium text-slate-800 dark:text-slate-100 leading-tight">{d.sector}</span>
+      </div>
+      <div className="font-mono text-slate-700 dark:text-slate-200">{formatINR(d.value, { compact: true })}</div>
+      <div className="text-xs text-slate-400 mt-0.5">{d.pct.toFixed(1)}% of portfolio</div>
+    </div>
+  );
+}
+
+function AllocationChart({ sectorData }: { sectorData: SectorDatum[] }) {
+  const [activeIdx, setActiveIdx] = useState<number | null>(null);
+
+  const total = sectorData.reduce((s, d) => s + d.value, 0);
+  const enriched = useMemo(() =>
+    [...sectorData]
+      .sort((a, b) => b.value - a.value)
+      .map((d, i) => ({
+        ...d,
+        pct: total > 0 ? (d.value / total) * 100 : 0,
+        color: SECTOR_COLORS[i % SECTOR_COLORS.length],
+      })),
+    [sectorData, total]
+  );
+
+  const active = activeIdx !== null ? enriched[activeIdx] : null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle>Sector / Category Allocation</CardTitle>
+          {total > 0 && (
+            <span className="text-xs text-slate-400 font-normal">
+              {enriched.length} segment{enriched.length !== 1 ? "s" : ""}
+            </span>
+          )}
+        </div>
+      </CardHeader>
+      <CardBody>
+        {sectorData.length === 0 ? (
+          <div className="h-48 flex items-center justify-center text-sm text-slate-400">
+            Add holdings to see allocation.
+          </div>
+        ) : (
+          <div className="flex flex-col md:flex-row gap-6 md:gap-8 items-center md:items-start">
+
+            {/* Donut chart */}
+            <div className="relative shrink-0 w-52 h-52">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={enriched}
+                    dataKey="value"
+                    nameKey="sector"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={68}
+                    outerRadius={96}
+                    paddingAngle={enriched.length > 1 ? 2 : 0}
+                    strokeWidth={0}
+                    onMouseEnter={(_, i) => setActiveIdx(i)}
+                    onMouseLeave={() => setActiveIdx(null)}
+                  >
+                    {enriched.map((d, i) => (
+                      <Cell
+                        key={d.sector}
+                        fill={d.color}
+                        opacity={activeIdx === null || activeIdx === i ? 1 : 0.35}
+                        style={{ cursor: "pointer", transition: "opacity 0.15s" }}
+                      />
+                    ))}
+                  </Pie>
+                  <Tooltip content={<AllocationTooltip />} />
+                </PieChart>
+              </ResponsiveContainer>
+
+              {/* Centre label */}
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                {active ? (
+                  <>
+                    <span className="text-[11px] text-slate-400 leading-tight max-w-[80px] text-center truncate">{active.sector}</span>
+                    <span className="text-lg font-bold font-mono text-slate-800 dark:text-slate-100 leading-tight mt-0.5">{active.pct.toFixed(1)}%</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-[11px] text-slate-400">Portfolio</span>
+                    <span className="text-base font-bold font-mono text-slate-700 dark:text-slate-200 mt-0.5">{formatINR(total, { compact: true })}</span>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Legend table */}
+            <div className="flex-1 w-full min-w-0">
+              <div className="space-y-0 divide-y divide-slate-100 dark:divide-slate-800">
+                {enriched.map((d, i) => (
+                  <div
+                    key={d.sector}
+                    className={classNames(
+                      "flex items-center gap-3 py-2.5 px-1 rounded-md transition-colors cursor-default",
+                      activeIdx === i ? "bg-slate-50 dark:bg-slate-800/60" : "hover:bg-slate-50 dark:hover:bg-slate-800/40"
+                    )}
+                    onMouseEnter={() => setActiveIdx(i)}
+                    onMouseLeave={() => setActiveIdx(null)}
+                  >
+                    {/* Color swatch */}
+                    <span className="w-3 h-3 rounded-sm shrink-0" style={{ backgroundColor: d.color }} />
+
+                    {/* Sector name */}
+                    <span className="flex-1 text-sm text-slate-700 dark:text-slate-200 truncate min-w-0">{d.sector}</span>
+
+                    {/* Bar */}
+                    <div className="hidden sm:block w-24 bg-slate-100 dark:bg-slate-800 rounded-full h-1.5 shrink-0">
+                      <div
+                        className="h-1.5 rounded-full transition-all duration-300"
+                        style={{ width: `${d.pct}%`, backgroundColor: d.color }}
+                      />
+                    </div>
+
+                    {/* Pct */}
+                    <span className="w-12 text-right text-sm font-medium font-mono text-slate-600 dark:text-slate-300 shrink-0">
+                      {d.pct.toFixed(1)}%
+                    </span>
+
+                    {/* Value */}
+                    <span className="w-20 text-right text-sm font-mono text-slate-500 dark:text-slate-400 shrink-0">
+                      {formatINR(d.value, { compact: true })}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Footer totals row */}
+              <div className="flex items-center gap-3 px-1 pt-2.5 mt-0.5 border-t border-slate-200 dark:border-slate-700">
+                <span className="w-3 shrink-0" />
+                <span className="flex-1 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">Total</span>
+                <div className="hidden sm:block w-24 shrink-0" />
+                <span className="w-12 text-right text-xs font-semibold font-mono text-slate-500">100%</span>
+                <span className="w-20 text-right text-xs font-semibold font-mono text-slate-600 dark:text-slate-300">
+                  {formatINR(total, { compact: true })}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+      </CardBody>
+    </Card>
   );
 }
 
