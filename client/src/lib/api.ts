@@ -303,7 +303,7 @@ export const portfolioApi = {
       const pnl = currentValue - h.invested;
       const pnlPct = h.invested ? (pnl / h.invested) * 100 : 0;
       return {
-        id: h.id, symbol: h.symbol, name: h.name, instrumentType: h.instrument_type,
+        id: h.id, instrumentId: h.instrument_id, symbol: h.symbol, name: h.name, instrumentType: h.instrument_type,
         quantity: h.quantity, avgPrice: h.avg_price, invested: h.invested,
         ltp, currentValue, pnl, pnlPct, dayChange: dayCh * h.quantity,
         sector: meta?.sector ?? null,
@@ -533,6 +533,32 @@ export const marketApi = {
     try {
       return await edgeFetch<{ fund: any; returns: Record<string, number | null>; navChart: { date: string; nav: number }[] }>(`/mf-detail?id=${encodeURIComponent(id)}`);
     } catch { return null; }
+  }
+};
+
+// ---------- RESEARCH ----------
+
+export interface ResearchResult {
+  type: "stock" | "mf";
+  name: string;
+  symbol?: string;
+  currentPrice: number;
+  fundamentals: Record<string, number | string | null>;
+  analyst: Record<string, number | string | null> | null;
+  history: {
+    cagr1Y: number | null;
+    cagr3Y: number | null;
+    cagr5Y: number | null;
+    volatilityAnnualPct: number | null;
+    maxDrawdownPct: number | null;
+    holdingCagrPct?: number | null;
+  };
+  projections: { years: number; bear: number; base: number; bull: number }[];
+}
+
+export const researchApi = {
+  async get(type: "stock" | "mf", id: string): Promise<ResearchResult> {
+    return edgeFetch<ResearchResult>(`/research?type=${type}&id=${encodeURIComponent(id)}`);
   }
 };
 

@@ -8,12 +8,14 @@ import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { changeColor, classNames, formatINR, formatPct } from "@/lib/format";
-import { CircleAlert as AlertCircle, CircleCheck as CheckCircle2, Download, Plus, Upload, X } from "lucide-react";
+import { CircleAlert as AlertCircle, CircleCheck as CheckCircle2, Download, Plus, Upload, X, FlaskConical } from "lucide-react";
+import ResearchPanel from "@/components/research/ResearchPanel";
 
 const SECTOR_COLORS = ["#2f8df8", "#16a34a", "#f59e0b", "#dc2626", "#0ea5e9", "#65a30d", "#475569", "#ec4899"];
 
 interface Holding {
   id: string;
+  instrumentId: string;
   symbol: string;
   name: string;
   instrumentType: string;
@@ -62,6 +64,7 @@ export default function Portfolio() {
 
   const [showAdd, setShowAdd] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [researchHolding, setResearchHolding] = useState<Holding | null>(null);
 
   function invalidate() {
     qc.invalidateQueries({ queryKey: ["portfolio"] });
@@ -124,16 +127,21 @@ export default function Portfolio() {
         title="Stock holdings"
         holdings={(portfolio.data?.holdings ?? []).filter((h) => h.instrumentType === "STOCK")}
         emptyMsg="No stock holdings yet."
+        onResearch={setResearchHolding}
       />
 
       <HoldingsTable
         title="Mutual Fund holdings"
         holdings={(portfolio.data?.holdings ?? []).filter((h) => h.instrumentType === "MF")}
         emptyMsg="No mutual fund holdings yet."
+        onResearch={setResearchHolding}
       />
 
       {showAdd    && <AddTransactionModal onClose={() => setShowAdd(false)}    onSuccess={invalidate} />}
       {showImport && <ImportCsvModal      onClose={() => setShowImport(false)} onSuccess={invalidate} />}
+      {researchHolding && (
+        <ResearchModal holding={researchHolding} onClose={() => setResearchHolding(null)} />
+      )}
     </div>
   );
 }
@@ -164,7 +172,7 @@ function SortIcon({ dir }: { dir: SortDir }) {
   return <span className="ml-1 opacity-70">{dir === "desc" ? "↓" : "↑"}</span>;
 }
 
-function HoldingsTable({ title, holdings, emptyMsg }: { title: string; holdings: Holding[]; emptyMsg: string }) {
+function HoldingsTable({ title, holdings, emptyMsg, onResearch }: { title: string; holdings: Holding[]; emptyMsg: string; onResearch: (h: Holding) => void }) {
   const [sortCol, setSortCol] = useState<SortCol>("pnl");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
@@ -262,9 +270,17 @@ function HoldingsTable({ title, holdings, emptyMsg }: { title: string; holdings:
             </thead>
             <tbody>
               {sorted.map((h) => (
-                <tr key={h.id} className="border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+                <tr
+                  key={h.id}
+                  className="border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors cursor-pointer"
+                  onClick={() => onResearch(h)}
+                  title="Click to open research"
+                >
                   <td className="px-5 py-2">
-                    <div className="font-medium">{h.symbol}</div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-medium">{h.symbol}</span>
+                      <FlaskConical className="w-3 h-3 text-slate-300 dark:text-slate-600 group-hover:text-brand-400" />
+                    </div>
                     <div className="text-xs text-slate-500 truncate max-w-xs">{h.name}</div>
                   </td>
                   <td className="px-3 py-2 text-right font-mono">{h.quantity}</td>
@@ -283,6 +299,37 @@ function HoldingsTable({ title, holdings, emptyMsg }: { title: string; holdings:
         </div>
       </CardBody>
     </Card>
+  );
+}
+
+function ResearchModal({ holding, onClose }: { holding: Holding; onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="w-full max-w-xl bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col max-h-[90vh]">
+        <div className="flex items-start justify-between px-5 pt-5 pb-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+          <div>
+            <h2 className="text-lg font-semibold flex items-center gap-2">
+              <FlaskConical className="w-5 h-5 text-brand-500" />
+              Research
+            </h2>
+            <p className="text-sm text-slate-500 mt-0.5">{holding.name} ({holding.symbol})</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-5 py-5">
+          <ResearchPanel
+            type={holding.instrumentType === "MF" ? "mf" : "stock"}
+            id={holding.instrumentId}
+            name={holding.name}
+          />
+        </div>
+      </div>
+    </div>
   );
 }
 

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuthStore } from "@/store/auth";
 import { useThemeStore } from "@/store/theme";
-import { ChartLine as LineChart, LayoutDashboard, Briefcase, Star, ListFilter as Filter, User as User2, Sun, Moon, LogOut, Bell, BookOpen, Menu, X, CirclePlus as PlusCircle, TrendingUp } from "lucide-react";
+import { ChartLine as LineChart, LayoutDashboard, Briefcase, FlaskConical, Star, ListFilter as Filter, User as User2, Sun, Moon, LogOut, Bell, BookOpen, Menu, X, CirclePlus as PlusCircle, TrendingUp } from "lucide-react";
 import GlobalSearch from "@/components/stocks/GlobalSearch";
 import IndicesBanner from "@/components/dashboard/IndicesBanner";
 import { classNames } from "@/lib/format";
@@ -10,6 +10,7 @@ import { classNames } from "@/lib/format";
 const navItems = [
   { to: "/",            label: "Dashboard",    icon: LayoutDashboard },
   { to: "/portfolio",   label: "Portfolio",    icon: Briefcase },
+  { to: "/research",    label: "Research",     icon: FlaskConical },
   { to: "/watchlist",   label: "Watchlist",    icon: Star },
   { to: "/screener",    label: "Screener",     icon: Filter },
   { to: "/mf/compare",  label: "Mutual Funds", icon: TrendingUp },

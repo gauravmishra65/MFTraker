@@ -16,6 +16,7 @@ import MFCompare from "@/pages/MFCompare";
 import Alerts from "@/pages/Alerts";
 import Education from "@/pages/Education";
 import StockSearch from "@/pages/StockSearch";
+import Research from "@/pages/Research";
 
 export default function App() {
   return (
@@ -32,6 +33,7 @@ export default function App() {
           <Route path="/mf/compare" element={<MFCompare />} />
           <Route path="/mf/:id" element={<MFDetail />} />
           <Route path="/portfolio" element={<Portfolio />} />
+          <Route path="/research" element={<Research />} />
           <Route path="/watchlist" element={<Watchlist />} />
           <Route path="/screener" element={<Screener />} />
           <Route path="/alerts" element={<Alerts />} />
